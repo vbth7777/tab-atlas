@@ -3,30 +3,47 @@ import type { WorkspaceRepository } from './workspace-repository';
 
 const STORAGE_KEY = 'tab-atlas.workspace-store';
 
-function isWorkspaceStore(value: unknown): value is WorkspaceStore {
-  return Boolean(
-    value &&
-      typeof value === 'object' &&
-      (value as WorkspaceStore).schemaVersion === 1 &&
-      Array.isArray((value as WorkspaceStore).workspaces),
-  );
+interface LegacyWorkspaceStoreV1 {
+  schemaVersion: 1;
+  workspaces: Array<Omit<Workspace, 'live'>>;
 }
 
+function isStoreV2(value: unknown): value is WorkspaceStore {
+  const store = value as WorkspaceStore | undefined;
+  return Boolean(store && typeof store === 'object' && store.schemaVersion === 2 && Array.isArray(store.workspaces));
+}
+
+function isStoreV1(value: unknown): value is LegacyWorkspaceStoreV1 {
+  const store = value as LegacyWorkspaceStoreV1 | undefined;
+  return Boolean(store && typeof store === 'object' && store.schemaVersion === 1 && Array.isArray(store.workspaces));
+}
+
+/**
+ * Upgrades persisted data to the current schema. v1 snapshots keep every saved
+ * tab but start disconnected: Chrome window ids never survive a browser restart,
+ * so a window link has to be re-established the next time a workspace opens.
+ */
 export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
-  if (isWorkspaceStore(value)) return value;
+  if (isStoreV2(value)) return { ...value, windowToWorkspace: value.windowToWorkspace ?? {} };
+
+  if (isStoreV1(value)) {
+    return {
+      schemaVersion: 2,
+      windowToWorkspace: {},
+      workspaces: value.workspaces.map((workspace) => ({ ...workspace, live: { status: 'disconnected' } })),
+    };
+  }
+
   return EMPTY_STORE;
 }
 
 export class ChromeLocalWorkspaceRepository implements WorkspaceRepository {
-  private async read(): Promise<WorkspaceStore> {
+  /** Serialises writes inside this service worker instance. */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  async read(): Promise<WorkspaceStore> {
     const result = await browser.storage.local.get(STORAGE_KEY);
-    const store = migrateWorkspaceStore(result[STORAGE_KEY]);
-
-    if (result[STORAGE_KEY] !== store) {
-      await this.replace(store);
-    }
-
-    return store;
+    return migrateWorkspaceStore(result[STORAGE_KEY]);
   }
 
   async list(): Promise<Workspace[]> {
@@ -40,22 +57,42 @@ export class ChromeLocalWorkspaceRepository implements WorkspaceRepository {
   }
 
   async save(workspace: Workspace): Promise<void> {
-    const store = await this.read();
-    const index = store.workspaces.findIndex((item) => item.id === workspace.id);
-    const workspaces = [...store.workspaces];
+    await this.update((store) => {
+      const workspaces = [...store.workspaces];
+      const index = workspaces.findIndex((item) => item.id === workspace.id);
 
-    if (index === -1) workspaces.push(workspace);
-    else workspaces[index] = workspace;
+      if (index === -1) workspaces.push(workspace);
+      else workspaces[index] = workspace;
 
-    await this.replace({ ...store, workspaces });
+      return { store: { ...store, workspaces }, result: undefined };
+    });
   }
 
   async remove(id: string): Promise<void> {
-    const store = await this.read();
-    await this.replace({ ...store, workspaces: store.workspaces.filter((item) => item.id !== id) });
+    await this.update((store) => {
+      const windowToWorkspace = Object.fromEntries(
+        Object.entries(store.windowToWorkspace).filter(([, workspaceId]) => workspaceId !== id),
+      );
+
+      return {
+        store: { ...store, windowToWorkspace, workspaces: store.workspaces.filter((item) => item.id !== id) },
+        result: undefined,
+      };
+    });
   }
 
   async replace(store: WorkspaceStore): Promise<void> {
     await browser.storage.local.set({ [STORAGE_KEY]: store });
+  }
+
+  async update<T>(mutator: (store: WorkspaceStore) => { store: WorkspaceStore; result: T }): Promise<T> {
+    const run = this.queue.then(async () => {
+      const { store, result } = mutator(await this.read());
+      await this.replace(store);
+      return result;
+    });
+
+    this.queue = run.catch(() => undefined);
+    return run;
   }
 }

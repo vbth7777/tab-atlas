@@ -9,14 +9,14 @@ export type WorkspaceColor =
   | 'violet';
 
 export const workspaceColors: Record<WorkspaceColor, { label: string; value: string }> = {
-  indigo: { label: 'Indigo', value: '#6366f1' },
-  sky: { label: 'Sky', value: '#0ea5e9' },
-  teal: { label: 'Teal', value: '#14b8a6' },
-  emerald: { label: 'Emerald', value: '#10b981' },
-  amber: { label: 'Amber', value: '#f59e0b' },
-  orange: { label: 'Orange', value: '#f97316' },
-  rose: { label: 'Rose', value: '#f43f5e' },
-  violet: { label: 'Violet', value: '#8b5cf6' },
+  indigo: { label: 'Indigo', value: '#818cf8' },
+  sky: { label: 'Sky', value: '#38bdf8' },
+  teal: { label: 'Teal', value: '#2dd4bf' },
+  emerald: { label: 'Emerald', value: '#34d399' },
+  amber: { label: 'Amber', value: '#fbbf24' },
+  orange: { label: 'Orange', value: '#fb923c' },
+  rose: { label: 'Rose', value: '#fb7185' },
+  violet: { label: 'Violet', value: '#a78bfa' },
 };
 
 export interface SavedTab {
@@ -28,18 +28,28 @@ export interface SavedTab {
   savedAt: string;
 }
 
+/** `windowId` is only meaningful inside the current browser session. */
+export interface WorkspaceLiveState {
+  status: 'connected' | 'disconnected';
+  windowId?: number;
+  lastSyncedAt?: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
   color: WorkspaceColor;
   tabs: SavedTab[];
+  live: WorkspaceLiveState;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface WorkspaceStore {
-  schemaVersion: 1;
+  schemaVersion: 2;
   workspaces: Workspace[];
+  /** Maps a Chrome window id to the workspace that owns it. */
+  windowToWorkspace: Record<string, string>;
 }
 
 export interface TabSnapshot {
@@ -49,4 +59,8 @@ export interface TabSnapshot {
   favIconUrl?: string;
 }
 
-export const EMPTY_STORE: WorkspaceStore = { schemaVersion: 1, workspaces: [] };
+export const EMPTY_STORE: WorkspaceStore = { schemaVersion: 2, workspaces: [], windowToWorkspace: {} };
+
+export function isConnected(workspace: Workspace): boolean {
+  return workspace.live.status === 'connected' && workspace.live.windowId !== undefined;
+}

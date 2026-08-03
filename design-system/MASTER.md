@@ -2,7 +2,7 @@
 
 ## Intent
 
-A calm, high-density workspace library for people who routinely carry dozens of browser tabs. The design makes saved context feel tangible without imitating browser chrome.
+A calm, high-density workspace library for people who routinely carry dozens of browser tabs. Each workspace is a live view of one dedicated Chrome window: opening, closing, or reordering tabs updates it automatically. Switching workspaces focuses the owning window rather than duplicating it.
 
 ## Foundations
 
@@ -26,6 +26,8 @@ A calm, high-density workspace library for people who routinely carry dozens of 
 - Buttons: 8–9px radii; solid blue is reserved for primary actions; secondary actions use visible neutral borders.
 - Tab rows: favicon, title, hostname + URL, then an affordance to open the individual tab. Preserve one-line titles and URLs to support rapid scanning.
 - Workspace navigation: colored vertical marker, name, tab count; selected state uses an elevated muted-blue surface and stronger text.
+- Live state: every workspace shows a text badge — `LIVE` (green) when it owns an open window, `WINDOW CLOSED` (amber) when disconnected — plus a plain-text sync time. State is always spelled out in words, never signalled by colour alone.
+- Destructive or window-affecting actions are labelled explicitly (`Switch to workspace`, `Open workspace`, `Detach`, `Delete`) and never hide how many tabs or windows they touch.
 
 ## Interaction & Accessibility
 
