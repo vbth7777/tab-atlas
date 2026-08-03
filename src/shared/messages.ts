@@ -2,20 +2,31 @@ import type { Workspace, WorkspaceColor } from '@/src/domain/workspace';
 
 export type ExtensionMessage =
   | { type: 'list-workspaces' }
-  | { type: 'get-current-tabs' }
-  | { type: 'save-current-window'; name: string; color: WorkspaceColor; closeAfterSave: boolean }
-  | { type: 'restore-workspace'; workspaceId: string }
-  | { type: 'restore-tab'; url: string }
+  | { type: 'get-window-context' }
+  | { type: 'create-live-workspace'; name: string; color: WorkspaceColor }
+  | { type: 'activate-workspace'; workspaceId: string }
+  | { type: 'sync-workspace'; workspaceId: string }
+  | { type: 'detach-workspace'; workspaceId: string }
+  | { type: 'open-tab'; url: string }
   | { type: 'update-workspace'; workspaceId: string; name: string; color: WorkspaceColor }
   | { type: 'delete-workspace'; workspaceId: string }
   | { type: 'open-dashboard' };
 
+/** Describes the window the UI is acting on, so it can offer the right action. */
+export interface WindowContext {
+  windowId: number | null;
+  webTabCount: number;
+  workspace: Workspace | null;
+}
+
 export interface MessageMap {
   'list-workspaces': { ok: true; workspaces: Workspace[] };
-  'get-current-tabs': { ok: true; tabs: Array<{ id: number; title?: string; url?: string }> };
-  'save-current-window': { ok: true; workspace: Workspace };
-  'restore-workspace': { ok: true };
-  'restore-tab': { ok: true };
+  'get-window-context': { ok: true; context: WindowContext };
+  'create-live-workspace': { ok: true; workspace: Workspace };
+  'activate-workspace': { ok: true; workspace: Workspace };
+  'sync-workspace': { ok: true; workspace: Workspace };
+  'detach-workspace': { ok: true; workspace: Workspace };
+  'open-tab': { ok: true };
   'update-workspace': { ok: true; workspace: Workspace };
   'delete-workspace': { ok: true };
   'open-dashboard': { ok: true };
