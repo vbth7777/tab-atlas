@@ -1,5 +1,7 @@
 # Tab Atlas
 
+🌐 **[Website & Demo](https://vbth7777.github.io/tab-atlas-site/)**
+
 A Chrome extension for managing large sets of browser tabs as live, named workspaces.
 
 Each workspace owns one dedicated Chrome window. As you open, close, or reorder tabs in that window, the workspace updates itself in near real time. Switching to a workspace focuses its window instead of opening duplicates.
