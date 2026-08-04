@@ -4,6 +4,7 @@ import {
   bindWindowToWorkspace,
   createLiveWorkspace,
   disconnectWindow,
+  extractWebUrl,
   findWorkspaceByWindow,
   reconcileOpenWindows,
   syncWorkspaceFromWindow,
@@ -18,7 +19,7 @@ const pendingSyncs = new Map<number, ReturnType<typeof setTimeout>>();
 const activating = new Map<string, Promise<unknown>>();
 
 function isWebTab(tab: { url?: string }): boolean {
-  return /^https?:\/\//.test(tab.url ?? '');
+  return extractWebUrl(tab.url) !== null;
 }
 
 async function windowTabs(windowId: number) {
