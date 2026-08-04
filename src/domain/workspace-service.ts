@@ -5,12 +5,35 @@ function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
-export function toSavedTab(tab: TabSnapshot, savedAt: string): SavedTab | null {
-  if (!tab.url || !/^https?:\/\//.test(tab.url)) return null;
+export function extractWebUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  if (/^https?:\/\//.test(url)) return url;
 
-  let hostname = tab.url;
+  if (url.startsWith('chrome-extension://')) {
+    try {
+      const urlObj = new URL(url);
+      let realUrl = urlObj.searchParams.get('url') || urlObj.searchParams.get('uri');
+      if (!realUrl && urlObj.hash) {
+        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+        realUrl = hashParams.get('url') || hashParams.get('uri');
+      }
+      if (realUrl && /^https?:\/\//.test(realUrl)) {
+        return realUrl;
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }
+  return null;
+}
+
+export function toSavedTab(tab: TabSnapshot, savedAt: string): SavedTab | null {
+  const url = extractWebUrl(tab.url);
+  if (!url) return null;
+
+  let hostname = url;
   try {
-    hostname = new URL(tab.url).hostname.replace(/^www\./, '');
+    hostname = new URL(url).hostname.replace(/^www\./, '');
   } catch {
     // Ignore malformed URLs; Chrome will still receive them when reopened.
   }
@@ -18,7 +41,7 @@ export function toSavedTab(tab: TabSnapshot, savedAt: string): SavedTab | null {
   return {
     id: createId('tab'),
     title: tab.title?.trim() || hostname,
-    url: tab.url,
+    url,
     faviconUrl: tab.favIconUrl,
     hostname,
     savedAt,
