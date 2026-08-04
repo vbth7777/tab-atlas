@@ -31,25 +31,40 @@ npm install
 npm run dev
 ```
 
-Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and choose the development build folder printed by WXT.
+Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and choose the `.output/chrome-mv3` folder.
 
 ## Quality checks and packaging
 
 ```bash
-npm run test
-npm run lint
-npm run compile
-npm run build
+npm run test      # unit tests (Vitest)
+npm run lint      # ESLint
+npm run compile   # TypeScript type-check
+npm run build     # production build + ZIP
 ```
 
-`npm run build` creates both the unpacked Chrome MV3 extension in `.output/chrome-mv3` and a distributable ZIP at `.output/tab-atlas-<version>-chrome.zip`.
+`npm run build` creates the unpacked extension in `.output/chrome-mv3` and a distributable ZIP at `.output/tab-atlas-<version>-chrome.zip`.
+
+## Project structure
+
+```
+entrypoints/
+  background.ts        ← service worker: listens to Chrome tab/window events
+  popup/               ← toolbar popup UI (React)
+  dashboard/           ← full-screen dashboard UI (React)
+src/
+  domain/              ← business logic & models (Workspace, WorkspaceService)
+  data/                ← persistence (repository interface + Chrome storage impl)
+  shared/              ← typed message protocol between UI ↔ background
+  ui/                  ← shared components, styles, hooks
+```
 
 ## Architecture
 
 - **WXT + React + TypeScript** with Chrome Manifest V3.
-- The background service worker owns Chrome Tabs/Windows API calls, listens for tab and window events, and mirrors each window into the workspace that owns it.
-- A repository interface isolates persistence; the current `ChromeLocalWorkspaceRepository` uses `chrome.storage.local` with atomic read-modify-write updates.
-- Domain models are schema-versioned (v2), so a future API-backed or synchronized repository can be added without rewriting UI and business logic.
+- The **background service worker** owns all Chrome Tabs/Windows API calls. It listens for tab and window events, debounces rapid changes, and syncs each window into its workspace.
+- The **popup** and **dashboard** talk to the background through a typed message protocol — they never call Chrome APIs directly.
+- A **repository interface** isolates persistence; the current implementation uses `chrome.storage.local` with atomic read-modify-write to prevent race conditions from burst events.
+- Domain models are **schema-versioned** (currently v2 with auto-migration from v1), so a future sync/cloud backend can be added without rewriting UI or business logic.
 
 ## Privacy
 
