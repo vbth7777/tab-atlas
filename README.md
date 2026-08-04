@@ -72,4 +72,5 @@ A workspace stores only tab metadata: URL, title, hostname, favicon URL when sup
 
 ## License
 
-This project is currently unlicensed. Add a license before distributing it beyond private use.
+This project is licensed under the [MIT License](LICENSE).
+
