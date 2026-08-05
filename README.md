@@ -19,10 +19,17 @@ Tab Atlas is local-first: workspace data stays in Chrome's local extension stora
 
 ## Install from a release
 
+### Chrome
 1. Download `tab-atlas-<version>-chrome.zip` from the latest GitHub Release and extract it.
 2. Open `chrome://extensions` in Chrome.
 3. Turn on **Developer mode**.
 4. Choose **Load unpacked**, then select the extracted folder.
+
+### Firefox (Development/Temporary)
+1. Download `tab-atlas-<version>-firefox.zip` from the latest GitHub Release.
+2. Open `about:debugging#/runtime/this-firefox` in Firefox.
+3. Click **Load Temporary Add-on...**
+4. Select the downloaded `.zip` file.
 
 ## Development
 
