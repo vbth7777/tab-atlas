@@ -1,160 +1,162 @@
 <div align="center">
 
+<img src="public/icon/128.png" alt="Tab Atlas Logo" width="96" height="96" />
+
 # 🧭 Tab Atlas — Community Edition
 
-**Trình quản lý Browser Workspaces thời gian thực · 100% Local-First & Bảo mật · Tab Suspender & Incognito Zero-Lag**
+**Real-Time Browser Workspace Manager · 100% Local-First & Private · Tab Suspender & Incognito Zero-Lag**
 
 [![Release](https://img.shields.io/github/v/release/vbth7777/tab-atlas?color=6366F1&label=Release)](https://github.com/vbth7777/tab-atlas/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-1E293B.svg)](https://developer.chrome.com/docs/extensions/develop/migrate)
-[![Chrome](https://img.shields.io/badge/Chrome-supported-4285F4.svg)](#cài-đặt-trên-google-chrome)
-[![Edge](https://img.shields.io/badge/Edge-supported-0078D7.svg)](#cài-đặt-trên-microsoft-edge)
-[![Privacy](https://img.shields.io/badge/Privacy-100%25%20Offline%20Vault-brightgreen.svg)](#bảo-mật--quyền-riêng-tư)
+[![Chrome](https://img.shields.io/badge/Chrome-supported-4285F4.svg)](#installation-on-google-chrome)
+[![Edge](https://img.shields.io/badge/Edge-supported-0078D7.svg)](#installation-on-microsoft-edge)
+[![Privacy](https://img.shields.io/badge/Privacy-100%25%20Offline%20Vault-brightgreen.svg)](#privacy--local-vault)
 [![Tests](https://img.shields.io/badge/Tests-20%2F20%20Passing-brightgreen.svg)](src/domain/workspace-service.test.ts)
 
 </div>
 
 ---
 
-## 🛡️ 100% Local-First. Không cần tài khoản. Mở hơn 50+ tab mượt mà không lo tràn RAM.
+## 🛡️ 100% Local-First. No account required. Open 50+ tabs without RAM thrashing.
 
-> **Tab Atlas** là giải pháp quản lý không gian làm việc (Workspaces) mã nguồn mở, hoạt động **hoàn toàn Offline** trên trình duyệt của bạn. Mỗi cửa sổ trình duyệt là một **Live Workspace** tự động lưu trữ và đồng bộ trạng thái ngay trên máy tính mà không gửi bất kỳ dữ liệu nào ra bên ngoài.
+> **Tab Atlas** is an open-source, local-first browser workspace manager designed for complete privacy and maximum speed. Every browser window is a **Live Workspace** that automatically tracks your active tabs and updates locally on your device without sending a single byte to external servers.
 
-Tích hợp công nghệ **Custom Tab Suspender** và **Chromium Native Discard**, Tab Atlas giải quyết triệt để vấn đề giật lag, ngốn RAM khi khôi phục lại các workspace dung lượng lớn (50–100+ tabs) ở cả **chế độ Thường** lẫn **chế độ Ẩn danh (Incognito)**.
-
----
-
-## ✨ Tính năng nổi bật
-
-- 🗂️ **Quản lý Workspace theo cửa sổ (1 Window = 1 Live Workspace)**: Mỗi không gian làm việc gắn liền với một cửa sổ riêng biệt. Chuyển đổi workspace chỉ bằng 1 cú click (tự động focus cửa sổ đang mở thay vì mở trùng lặp).
-- ⚡ **Tự động theo dõi & đồng bộ Realtime**: Thêm tab, đóng tab hay đổi thứ tự tab trong cửa sổ đều được ghi nhận ngay lập tức với cơ chế debounce chống nghẽn I/O.
-- 💤 **Custom Tab Suspender (Chế độ Thường)**: Khi mở workspace lớn, các tab chạy nền được đưa vào trạng thái ngủ ngắt RAM/CPU (`suspended.html`). Chỉ khi bạn click chọn tab nào, tab đó mới tự động nạp trang web thật (`browser.tabs.onActivated`).
-- 🕶️ **Incognito Native Discard (Chế độ Ẩn danh)**: Mở nhanh workspace vào cửa sổ Ẩn danh với 1-click. Tự động ngắt tiến trình renderer chạy ngầm bằng Chromium API, triệt tiêu 100% giật lag mà không bị lỗi `ERR_BLOCKED_BY_CLIENT`.
-- 🔒 **Bảo mật & Riêng tư 100% (Local Vault)**: Toàn bộ dữ liệu nằm trong `chrome.storage.local`. Không yêu cầu tài khoản, không theo dõi người dùng, không có server trung gian.
-- 💾 **Sao lưu & Phục hồi JSON**: Hỗ trợ Export và Import toàn bộ dữ liệu ra file `.json` dự phòng để chuyển đổi giữa các máy tính dễ dàng.
-- 🔍 **Tìm kiếm toàn diện (Instant Search)**: Tìm kiếm nhanh theo tên workspace, tiêu đề tab, tên miền hoặc URL chính xác.
-- 🎨 **Giao diện Dark Mode hiện đại**: Popup tiện ích nhỏ gọn và Dashboard toàn màn hình với thiết kế tối giản, trực quan, hỗ trợ gắn màu nhận diện (Indigo, Cyan, Rose, Amber, Emerald, Violet,...).
+Featuring a built-in **Custom Tab Suspender** and **Chromium Native Tab Discarding**, Tab Atlas eliminates tab-burst freezing and memory thrashing when restoring large workspaces (50–100+ tabs) in both **Normal** and **Incognito** windows.
 
 ---
 
-## 📋 Yêu cầu hệ thống
+## ✨ Features
 
-| Tiêu chí | Yêu cầu |
+- 🗂️ **Window-Bound Live Workspaces (1 Window = 1 Live Workspace)**: Each workspace is linked to a dedicated window. Switching workspaces brings its window into focus rather than opening redundant copies.
+- ⚡ **Real-Time Automatic Sync**: Opening, closing, moving, or updating tabs automatically updates the workspace snapshot with smart debounce protection.
+- 💤 **Custom Tab Suspender (Normal Mode)**: Background tabs in restored workspaces stay suspended in an ultra-lightweight state (`suspended.html`, ~0.1 MB RAM, 0% CPU). Tabs seamlessly wake up the moment you click or switch to them (`browser.tabs.onActivated`).
+- 🕶️ **Native Tab Discard (Incognito Mode)**: 1-Click launcher into Incognito mode. Discards background tab processes natively using Chromium APIs to eliminate memory lag without triggering `ERR_BLOCKED_BY_CLIENT` extension security blocks.
+- 🔒 **100% Local Vault & Private**: All data is stored purely within `chrome.storage.local`. No accounts, no telemetry, no tracking, and no external servers.
+- 💾 **Offline JSON Backup & Restore**: Export and import your entire workspace collection to a `.json` backup file anytime.
+- 🔍 **Instant Deep Search**: Instantly filter across all saved workspaces by workspace name, tab title, domain, or full URL.
+- 🎨 **Modern Dark-Mode UI**: Compact, high-density toolbar popup and a distraction-free full-screen dashboard with custom color tags (Indigo, Cyan, Rose, Amber, Emerald, Violet, etc.).
+
+---
+
+## 📋 System Requirements
+
+| Requirement | Specification |
 |---|---|
-| **Trình duyệt** | Google Chrome 109+ hoặc Microsoft Edge 109+ |
-| **Hệ điều hành** | Windows, macOS, hoặc Linux |
-| **Dung lượng trống** | Khoảng 5 MB |
-| **Kết nối mạng** | **Không cần** (Hoạt động 100% Offline) |
+| **Supported Browsers** | Google Chrome 109+ or Microsoft Edge 109+ |
+| **Operating System** | Windows, macOS, or Linux |
+| **Disk Space** | ~5 MB |
+| **Internet Connection** | **None** (Works 100% Offline) |
 
 ---
 
-## 📦 Hướng dẫn cài đặt cho người dùng
+## 📦 User Installation Guide
 
-Extension cài đặt thủ công cực kỳ dễ dàng chỉ trong 1–2 phút:
+Installing manually takes only 1–2 minutes:
 
-### Bước 1 — Tải bộ cài đặt
+### Step 1 — Download the Release Package
 
-1. Truy cập trang [**Releases Mới Nhất**](../../releases/latest).
-2. Tại mục **Assets**, tải file `tab-atlas-0.1.2-chrome.zip`.
-3. **Giải nén** file vừa tải về một thư mục cố định trên máy (Ví dụ: `C:\Extensions\TabAtlas`).
+1. Go to the [**Latest Releases**](../../releases/latest) page.
+2. Under **Assets**, download `tab-atlas-0.1.2-chrome.zip`.
+3. **Extract** the downloaded `.zip` file into a permanent folder on your computer (e.g., `C:\Extensions\TabAtlas`).
 
 ---
 
-### Bước 2 — Cài đặt trên Google Chrome
+### Step 2 — Install on Google Chrome
 
-1. Mở Chrome, nhập vào thanh địa chỉ:
+1. Open Google Chrome and enter:
    ```
    chrome://extensions
    ```
-2. Bật công tắc **Developer mode** (Chế độ cho nhà phát triển) ở **góc trên bên phải**.
-3. Bấm nút **Load unpacked** (Tải tiện ích đã giải nén) ở góc trên bên trái.
-4. Chọn **thư mục bạn vừa giải nén** ở Bước 1.
-5. Bấm vào biểu tượng mảnh ghép 🧩 trên thanh công cụ và **Ghim (Pin)** Tab Atlas để sử dụng thuận tiện.
+2. Toggle on **Developer mode** in the **top-right corner**.
+3. Click **Load unpacked** in the top-left corner.
+4. Select the **extracted folder** from Step 1.
+5. Click the puzzle icon 🧩 on the browser toolbar and **Pin** Tab Atlas for easy access.
 
 ---
 
-### Bước 3 — Cài đặt trên Microsoft Edge
+### Step 3 — Install on Microsoft Edge
 
-1. Mở Edge, nhập vào thanh địa chỉ:
+1. Open Microsoft Edge and enter:
    ```
    edge://extensions
    ```
-2. Bật công tắc **Developer mode** ở **menu bên trái**.
-3. Bấm nút **Load unpacked** ở phía trên.
-4. Chọn thư mục đã giải nén và hoàn tất cài đặt.
+2. Toggle on **Developer mode** in the **left sidebar**.
+3. Click **Load unpacked** at the top.
+4. Select the extracted folder and confirm.
 
 ---
 
-### Bước 4 (Tùy chọn) — Cấp quyền sử dụng trong Ẩn danh (Incognito)
+### Step 4 (Optional) — Enable Incognito Access
 
-Để sử dụng tính năng **Mở Workspace trong Cửa sổ Ẩn danh**:
-1. Tại trang quản lý tiện ích (`chrome://extensions`), bấm nút **Details (Chi tiết)** của **Tab Atlas**.
-2. Cuộn xuống và bật công tắc **Allow in Incognito (Cho phép ở chế độ ẩn danh)**.
-
----
-
-## 💡 Hướng dẫn sử dụng & Mẹo nhanh
-
-### 1. Tạo Live Workspace từ cửa sổ hiện tại
-- Mở cửa sổ chứa các tab bạn muốn gom nhóm.
-- Bấm vào biểu tượng **Tab Atlas** trên thanh công cụ.
-- Đặt tên Workspace, chọn màu sắc và bấm **Start live workspace**.
-- Cửa sổ này giờ đã trở thành Workspace trực tiếp! Mọi tab đóng/mở đều được tự động lưu.
-
-### 2. Mở Workspace ở chế độ Ẩn danh (Incognito)
-- Trên danh sách Workspace ở Popup hoặc Dashboard, bấm vào biểu tượng **Kính & Mũ Ẩn danh (🕶️)** bên cạnh workspace.
-- Toàn bộ danh sách tab sẽ được mở trong cửa sổ Ẩn danh mới với cơ chế **Zero-Lag Tab Discard**.
-
-### 3. Sao lưu và Khôi phục dữ liệu
-- Bấm nút **Export JSON** trên Popup hoặc Dashboard để tải về file `.json` dự phòng.
-- Khi cài lại máy hoặc đổi thiết bị, chỉ cần bấm **Import JSON** và chọn file backup để khôi phục toàn bộ.
+To allow Tab Atlas to launch workspaces into Incognito windows:
+1. In `chrome://extensions`, click **Details** under **Tab Atlas**.
+2. Scroll down and enable **Allow in Incognito**.
 
 ---
 
-## ❓ Câu hỏi thường gặp (FAQ)
+## 💡 Quick Start & Tips
+
+### 1. Create a Live Workspace from Your Current Window
+- Open a window with the tabs you want to save.
+- Click the **Tab Atlas** icon in the toolbar.
+- Give it a name, pick a color, and click **Start live workspace**.
+- This window is now a connected workspace! Any tabs opened or closed are automatically tracked.
+
+### 2. Launch Workspace into Incognito Mode
+- From the popup or dashboard workspace list, click the **Incognito icon (🕶️)** next to any workspace.
+- All tabs will open directly in a new Incognito window with background tabs discarded to save CPU and RAM.
+
+### 3. Backup and Migrate Workspaces
+- Click **Export JSON** on the popup or dashboard to save an offline backup file.
+- On a new browser or machine, simply click **Import JSON** to restore your workspace vault.
+
+---
+
+## ❓ Frequently Asked Questions (FAQ)
 
 <details>
-<summary><b>Cơ chế Tab Suspender tiết kiệm tài nguyên như thế nào?</b></summary>
+<summary><b>How does the Tab Suspender save RAM and CPU?</b></summary>
 
-Khi bạn mở một Workspace có 50+ tab:
-- **Chế độ Thường:** Tab đầu tiên được tải bình thường. 49 tab chạy nền sẽ nạp giao diện tĩnh siêu nhẹ `suspended.html` (~0.1MB RAM). Khi bạn click vào tab nào, tiện ích sẽ tự động nạp trang web thật ngay lập tức.
-- **Chế độ Ẩn danh:** Mở trực tiếp URL thật và ngắt tiến trình ngầm bằng API `browser.tabs.discard`, không tiêu tốn RAM/CPU nền và không gây lỗi chặn quyền.
+When restoring a workspace containing 50+ tabs:
+- **In Normal Mode:** The first tab loads actively. Background tabs (2..N) load a static, super-lightweight `suspended.html` page (~0.1 MB RAM). When you switch to a suspended tab, it automatically wakes up and loads the actual web page.
+- **In Incognito Mode:** Opens the authentic URLs and calls `browser.tabs.discard` on background tabs immediately after navigation commits, freeing memory and CPU without triggering extension security blocks.
 </details>
 
 <details>
-<summary><b>Dữ liệu của tôi được lưu ở đâu? Có gửi ra ngoài không?</b></summary>
+<summary><b>Where is my data stored? Is it private?</b></summary>
 
-- 100% dữ liệu được lưu cục bộ trong `chrome.storage.local` trên trình duyệt của bạn.
-- Tiện ích **không gửi bất kỳ request mạng nào ra ngoài** và **tuyệt đối KHÔNG lưu cookie, lịch sử duyệt web hay mật khẩu của bạn**.
+- 100% of your workspace data is stored in `chrome.storage.local` directly inside your browser.
+- Tab Atlas **makes zero network requests** and **never stores cookies, form inputs, browsing history, or passwords**.
 </details>
 
 <details>
-<summary><b>Nếu xóa cache trình duyệt thì Workspace có bị mất không?</b></summary>
+<summary><b>Will clearing browser cache delete my workspaces?</b></summary>
 
-Không. Tiện ích lưu trữ trong vùng nhớ Extension Storage chuyên biệt. Việc xóa cache hay lịch sử duyệt web thông thường không làm ảnh hưởng đến dữ liệu Workspace.
+No. Extensions store their state in dedicated extension local storage. Clearing cache, cookies, or history will not affect your saved workspaces.
 </details>
 
 <details>
-<summary><b>Tôi có thể chuyển Workspace sang máy tính khác không?</b></summary>
+<summary><b>Can I transfer my workspaces to another computer?</b></summary>
 
-Có. Bạn có thể bấm nút **Export JSON** để xuất file sao lưu, sau đó dùng tính năng **Import JSON** trên máy tính mới.
+Yes. Click **Export JSON** to download a `.json` backup file, then use **Import JSON** on your other computer to merge your workspaces.
 </details>
 
 ---
 
-## 🛠️ Dành cho lập trình viên (Developer Guide)
+## 🛠️ Developer Guide
 
-### Công nghệ sử dụng
+### Tech Stack
 
-| Thành phần | Công nghệ |
+| Component | Technology |
 |---|---|
-| Framework Extension | [WXT Framework](https://wxt.dev) (Manifest V3) |
+| Extension Framework | [WXT](https://wxt.dev) (Manifest V3) |
 | UI & State | React 19, TypeScript, Vanilla CSS Design System |
-| Lưu trữ | `chrome.storage.local` (Local Storage Repository) |
+| Local Storage | `chrome.storage.local` (Local Storage Repository) |
 | Test Runner | [Vitest](https://vitest.dev) (Unit & Migration Tests) |
-| Đóng gói | Vite 8, WXT Zip Runner |
+| Bundler & Packager | Vite 8, WXT Zip Runner |
 
-### Sơ đồ kiến trúc
+### Architecture Overview
 
 ```
 +-------------------------------------------------------------+
@@ -179,29 +181,28 @@ Có. Bạn có thể bấm nút **Export JSON** để xuất file sao lưu, sau 
 +-------------------------------------------------------------+
 ```
 
-### Cài đặt môi trường & Chạy mã nguồn
+### Local Setup & Development
 
 ```bash
-# 1. Clone mã nguồn
+# 1. Clone the repository
 git clone https://github.com/vbth7777/tab-atlas.git
 cd tab-atlas
 
-# 2. Cài đặt dependencies
+# 2. Install dependencies
 npm install
 
-# 3. Chạy môi trường phát triển (Live Reload)
+# 3. Start development mode with hot-reload
 npm run dev
 
-# 4. Chạy bộ kiểm thử tự động
+# 4. Run automated unit tests
 npm test
 
-# 5. Build phiên bản phát hành (Production ZIP)
+# 5. Build production extension package
 npm run build
 ```
 
 ---
 
-## 📄 Giấy phép
+## 📄 License
 
-Mã nguồn được phát hành theo giấy phép [MIT License](LICENSE).
-Tự do sử dụng, chỉnh sửa và đóng góp cho cộng đồng.
+Distributed under the [MIT License](LICENSE).
