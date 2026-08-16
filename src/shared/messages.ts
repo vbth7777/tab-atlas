@@ -4,13 +4,15 @@ export type ExtensionMessage =
   | { type: 'list-workspaces' }
   | { type: 'get-window-context' }
   | { type: 'create-live-workspace'; name: string; color: WorkspaceColor }
-  | { type: 'activate-workspace'; workspaceId: string }
+  | { type: 'activate-workspace'; workspaceId: string; incognito?: boolean }
   | { type: 'sync-workspace'; workspaceId: string }
   | { type: 'detach-workspace'; workspaceId: string }
   | { type: 'open-tab'; url: string }
   | { type: 'update-workspace'; workspaceId: string; name: string; color: WorkspaceColor }
   | { type: 'delete-workspace'; workspaceId: string }
-  | { type: 'open-dashboard' };
+  | { type: 'open-dashboard' }
+  | { type: 'import-workspaces'; jsonText: string }
+  | { type: 'export-workspaces' };
 
 /** Describes the window the UI is acting on, so it can offer the right action. */
 export interface WindowContext {
@@ -30,6 +32,8 @@ export interface MessageMap {
   'update-workspace': { ok: true; workspace: Workspace };
   'delete-workspace': { ok: true };
   'open-dashboard': { ok: true };
+  'import-workspaces': { ok: true; message: string };
+  'export-workspaces': { ok: true; storeJson: string };
 }
 
 export type ExtensionResponse = MessageMap[keyof MessageMap] | { ok: false; error: string };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Workspace, WorkspaceColor } from '@/src/domain/workspace';
 import { sendMessage, type WindowContext } from '@/src/shared/messages';
 import { ColorPicker, Icon, WorkspaceBadge } from '@/src/ui/components';
@@ -12,6 +12,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const storeVersion = useWorkspaceStoreVersion();
 
   useEffect(() => {
@@ -44,6 +45,37 @@ export default function App() {
     }
   };
 
+  const exportJson = () => {
+    return run(async () => {
+      const res = await sendMessage({ type: 'export-workspaces' });
+      const blob = new Blob([res.storeJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tab-atlas-workspaces-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return 'Exported workspaces JSON file.';
+    });
+  };
+
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        run(async () => {
+          const res = await sendMessage({ type: 'import-workspaces', jsonText: content });
+          return res.message;
+        });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const create = (event: React.FormEvent) => {
     event.preventDefault();
     return run(async () => {
@@ -63,8 +95,13 @@ export default function App() {
     <header className="brand-line">
       <span className="brand-mark"><Icon name="layout" size={16} /></span>
       <span>Tab Atlas</span>
-      <button className="icon-button" onClick={() => sendMessage({ type: 'open-dashboard' })} aria-label="Open dashboard"><Icon name="arrow-up-right" /></button>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px', alignItems: 'center' }}>
+        <button className="ghost-button" style={{ fontSize: '10px', padding: '3px 6px' }} onClick={exportJson} disabled={busy}>Export</button>
+        <button className="ghost-button" style={{ fontSize: '10px', padding: '3px 6px' }} onClick={() => fileInputRef.current?.click()} disabled={busy}>Import</button>
+        <button className="icon-button" onClick={() => sendMessage({ type: 'open-dashboard' })} aria-label="Open dashboard"><Icon name="arrow-up-right" /></button>
+      </div>
     </header>
+    <input type="file" ref={fileInputRef} accept=".json" onChange={handleFileImport} style={{ display: 'none' }} />
 
     {linked ? <>
       <section className="popup-hero">
@@ -100,22 +137,46 @@ export default function App() {
 
     <section className="recent-section">
       <div className="section-heading"><h2>Workspaces</h2><button className="text-button" onClick={() => sendMessage({ type: 'open-dashboard' })}>View all</button></div>
-      {workspaces.slice(0, 4).map((workspace) => <button
-        className="workspace-row"
-        key={workspace.id}
-        disabled={busy}
-        onClick={() => run(async () => {
-          await sendMessage({ type: 'activate-workspace', workspaceId: workspace.id });
-          return `Switched to “${workspace.name}”.`;
-        })}
-      >
-        <span className={`workspace-color ${workspace.color}`} />
-        <span className="workspace-row-copy">
-          <strong>{workspace.name}</strong>
-          <small>{workspace.tabs.length} tabs · {workspace.live.status === 'connected' ? 'Live now' : 'Window closed'}</small>
-        </span>
-        <Icon name="chevron-right" />
-      </button>)}
+      {workspaces.slice(0, 4).map((workspace) => (
+        <div className="workspace-row-wrapper" key={workspace.id}>
+          <button
+            className="workspace-row"
+            disabled={busy}
+            title={`Mở “${workspace.name}” (Cửa sổ thường)`}
+            onClick={() =>
+              run(async () => {
+                await sendMessage({ type: 'activate-workspace', workspaceId: workspace.id, incognito: false });
+                return `Switched to “${workspace.name}”.`;
+              })
+            }
+          >
+            <span className={`workspace-color ${workspace.color}`} />
+            <span className="workspace-row-copy">
+              <strong>{workspace.name}</strong>
+              <small>
+                {workspace.tabs.length} tabs · {workspace.live.status === 'connected' ? (workspace.live.isIncognito ? 'Live (Ẩn danh)' : 'Live now') : 'Window closed'}
+              </small>
+            </span>
+          </button>
+          <div className="row-actions">
+            <button
+              className="row-action-btn"
+              disabled={busy}
+              title="Mở trong cửa sổ ẩn danh (Incognito)"
+              aria-label={`Mở ${workspace.name} ở chế độ ẩn danh`}
+              onClick={(e) => {
+                e.stopPropagation();
+                run(async () => {
+                  await sendMessage({ type: 'activate-workspace', workspaceId: workspace.id, incognito: true });
+                  return `Opened “${workspace.name}” in Incognito mode.`;
+                });
+              }}
+            >
+              <Icon name="incognito" size={14} />
+            </button>
+          </div>
+        </div>
+      ))}
       {!workspaces.length && <p className="empty-copy">Your live workspaces will appear here.</p>}
     </section>
   </main>;
