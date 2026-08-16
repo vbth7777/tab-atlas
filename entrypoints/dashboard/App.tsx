@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isConnected, type Workspace, type WorkspaceColor } from '@/src/domain/workspace';
 import { filterWorkspaces } from '@/src/domain/workspace-service';
 import { sendMessage } from '@/src/shared/messages';
@@ -25,25 +25,27 @@ export default function Dashboard() {
   const [color, setColor] = useState<WorkspaceColor>('indigo');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const storeVersion = useWorkspaceStoreVersion();
+
+  const loadAll = async () => {
+    try {
+      const response = await sendMessage({ type: 'list-workspaces' });
+      setWorkspaces(response.workspaces);
+      setSelectedId((current) =>
+        current && response.workspaces.some((item) => item.id === current) ? current : response.workspaces[0]?.id ?? null,
+      );
+      setLoading(false);
+    } catch (error: any) {
+      setNotice(error.message);
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
 
-    sendMessage({ type: 'list-workspaces' })
-      .then((response) => {
-        if (cancelled) return;
-        setWorkspaces(response.workspaces);
-        setSelectedId((current) =>
-          current && response.workspaces.some((item) => item.id === current) ? current : response.workspaces[0]?.id ?? null,
-        );
-        setLoading(false);
-      })
-      .catch((error: Error) => {
-        if (cancelled) return;
-        setNotice(error.message);
-        setLoading(false);
-      });
+    loadAll().catch((error: Error) => !cancelled && setNotice(error.message));
 
     return () => { cancelled = true; };
   }, [storeVersion]);
@@ -63,9 +65,41 @@ export default function Dashboard() {
   const run = async (action: () => Promise<string>) => {
     try {
       setNotice(await action());
+      await loadAll();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Something went wrong.');
     }
+  };
+
+  const exportJson = () => {
+    return run(async () => {
+      const res = await sendMessage({ type: 'export-workspaces' });
+      const blob = new Blob([res.storeJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tab-atlas-workspaces-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return 'Exported workspaces JSON file.';
+    });
+  };
+
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        run(async () => {
+          const res = await sendMessage({ type: 'import-workspaces', jsonText: content });
+          return res.message;
+        });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const remove = (workspace: Workspace) => {
@@ -95,7 +129,10 @@ export default function Dashboard() {
     >
       <span className={`workspace-color ${workspace.color}`} />
       <span>{workspace.name}</span>
-      <small>{workspace.tabs.length}</small>
+      <small>
+        {workspace.live.status === 'connected' && workspace.live.isIncognito ? '🕶️ ' : ''}
+        {workspace.tabs.length}
+      </small>
     </button>)}</nav>
   </>;
 
@@ -106,7 +143,23 @@ export default function Dashboard() {
       {navSection('LIVE NOW', live)}
       {navSection('WINDOW CLOSED', closed)}
       {!filtered.length && !loading && <p className="empty-copy">No workspaces match this search.</p>}
-      <div className="sidebar-footer"><span>Local-only vault</span><span className="privacy-dot" />No account required</div>
+      
+      <div className="sidebar-footer" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span>Local-only vault</span>
+          <span className="privacy-dot" />
+          <span>No account required</span>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+          <button className="ghost-button" style={{ fontSize: '10px', padding: '4px 8px' }} onClick={exportJson}>
+            Export JSON
+          </button>
+          <button className="ghost-button" style={{ fontSize: '10px', padding: '4px 8px' }} onClick={() => fileInputRef.current?.click()}>
+            Import JSON
+          </button>
+        </div>
+        <input type="file" ref={fileInputRef} accept=".json" onChange={handleFileImport} style={{ display: 'none' }} />
+      </div>
     </aside>
 
     <section className="dashboard-content">
@@ -120,10 +173,10 @@ export default function Dashboard() {
 
       {notice && <p className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><Icon name="x" size={16} /></button></p>}
 
-      {loading ? <p className="empty-copy">Loading workspaces…</p> : !selected ? <section className="dashboard-empty">
+      {loading ? <p className="empty-copy">Loading workspaces.</p> : !selected ? <section className="dashboard-empty">
         <span className="empty-icon"><Icon name="archive" size={28} /></span>
         <h2>No workspaces yet</h2>
-        <p>Open Tab Atlas from Chrome’s toolbar to turn the window you are browsing into a live workspace. Tabs you open or close are saved automatically.</p>
+        <p>Open Tab Atlas from Chrome's toolbar to turn the window you are browsing into a live workspace. Tabs you open or close are saved automatically.</p>
       </section> : <section className="workspace-detail">
         <div className="detail-toolbar">
           <div>{editing ? <form className="inline-edit" onSubmit={submitMetadata}>
@@ -147,10 +200,31 @@ export default function Dashboard() {
               const response = await sendMessage({ type: 'detach-workspace', workspaceId: selected.id });
               return `“${response.workspace.name}” no longer tracks its window.`;
             })}><Icon name="unlink" />Detach</button>}
-            <button className="primary-button compact" onClick={() => run(async () => {
-              await sendMessage({ type: 'activate-workspace', workspaceId: selected.id });
-              return isConnected(selected) ? `Switched to “${selected.name}”.` : `Opened “${selected.name}” in its own window.`;
-            })}><Icon name={isConnected(selected) ? 'arrow-up-right' : 'copy'} />{isConnected(selected) ? 'Switch to workspace' : 'Open workspace'}</button>
+            <button
+              className="primary-button compact"
+              onClick={() => run(async () => {
+                const res = await sendMessage({ type: 'activate-workspace', workspaceId: selected.id, incognito: false });
+                return isConnected(res.workspace) && !res.workspace.live.isIncognito
+                  ? `Switched to “${res.workspace.name}”.`
+                  : `Opened “${res.workspace.name}” in a normal window.`;
+              })}
+            >
+              <Icon name={isConnected(selected) && !selected.live.isIncognito ? 'arrow-up-right' : 'copy'} />
+              {isConnected(selected) && !selected.live.isIncognito ? 'Switch to window' : 'Open workspace'}
+            </button>
+            <button
+              className="ghost-button compact incognito-button"
+              onClick={() => run(async () => {
+                const res = await sendMessage({ type: 'activate-workspace', workspaceId: selected.id, incognito: true });
+                return isConnected(res.workspace) && res.workspace.live.isIncognito
+                  ? `Switched to Incognito window for “${res.workspace.name}”.`
+                  : `Opened “${res.workspace.name}” in Incognito window.`;
+              })}
+              title="Open workspace in an Incognito window"
+            >
+              <Icon name="incognito" size={15} />
+              {isConnected(selected) && selected.live.isIncognito ? 'Switch to Incognito' : 'Open in Incognito'}
+            </button>
           </div>
         </div>
 

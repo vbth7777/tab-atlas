@@ -6,6 +6,13 @@ export default defineConfig({
     name: 'Tab Atlas',
     description: 'Save, organize, and restore browser workspaces.',
     permissions: ['tabs', 'storage'],
+    incognito: 'spanning',
+    web_accessible_resources: [
+      {
+        resources: ['*'],
+        matches: ['<all_urls>'],
+      },
+    ],
     browser_specific_settings: {
       gecko: {
         id: 'tab-atlas@example.com',

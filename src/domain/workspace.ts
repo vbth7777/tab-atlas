@@ -32,6 +32,7 @@ export interface SavedTab {
 export interface WorkspaceLiveState {
   status: 'connected' | 'disconnected';
   windowId?: number;
+  isIncognito?: boolean;
   lastSyncedAt?: string;
 }
 
@@ -56,7 +57,9 @@ export interface TabSnapshot {
   id: number;
   title?: string;
   url?: string;
+  pendingUrl?: string;
   favIconUrl?: string;
+  status?: string;
 }
 
 export const EMPTY_STORE: WorkspaceStore = { schemaVersion: 2, workspaces: [], windowToWorkspace: {} };

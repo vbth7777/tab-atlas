@@ -19,18 +19,85 @@ function isStoreV1(value: unknown): value is LegacyWorkspaceStoreV1 {
 }
 
 /**
- * Upgrades persisted data to the current schema. v1 snapshots keep every saved
- * tab but start disconnected: Chrome window ids never survive a browser restart,
- * so a window link has to be re-established the next time a workspace opens.
+ * Upgrades persisted data to the current schema. Supports v2, v1, raw arrays,
+ * un-versioned objects, and nested storage wrappers so legacy workspace data is
+ * NEVER accidentally wiped.
  */
 export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
-  if (isStoreV2(value)) return { ...value, windowToWorkspace: value.windowToWorkspace ?? {} };
+  if (!value || typeof value !== 'object') {
+    return EMPTY_STORE;
+  }
+
+  // Unwrap if nested under storage key
+  if ('tab-atlas.workspace-store' in value && typeof (value as any)['tab-atlas.workspace-store'] === 'object') {
+    value = (value as any)['tab-atlas.workspace-store'];
+  }
+
+  if (isStoreV2(value)) {
+    return {
+      schemaVersion: 2,
+      windowToWorkspace: value.windowToWorkspace ?? {},
+      workspaces: value.workspaces.map((ws) => ({
+        ...ws,
+        live: ws.live || { status: 'disconnected' },
+        tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
+        createdAt: ws.createdAt || new Date().toISOString(),
+        updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
+      })),
+    };
+  }
 
   if (isStoreV1(value)) {
     return {
       schemaVersion: 2,
       windowToWorkspace: {},
-      workspaces: value.workspaces.map((workspace) => ({ ...workspace, live: { status: 'disconnected' } })),
+      workspaces: value.workspaces.map((workspace) => ({
+        ...workspace,
+        live: { status: 'disconnected' },
+        tabs: Array.isArray(workspace.tabs) ? workspace.tabs : [],
+        createdAt: workspace.createdAt || new Date().toISOString(),
+        updatedAt: workspace.updatedAt || workspace.createdAt || new Date().toISOString(),
+      })),
+    };
+  }
+
+  // Case 3: Raw Array of workspace objects [{ id, name, tabs }]
+  if (Array.isArray(value)) {
+    const validWorkspaces = value.filter(
+      (item) => item && typeof item === 'object' && typeof item.id === 'string' && typeof item.name === 'string',
+    );
+    if (validWorkspaces.length > 0) {
+      return {
+        schemaVersion: 2,
+        windowToWorkspace: {},
+        workspaces: validWorkspaces.map((ws: any) => ({
+          id: ws.id,
+          name: ws.name,
+          color: ws.color || 'indigo',
+          createdAt: ws.createdAt || new Date().toISOString(),
+          updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
+          tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
+          live: ws.live || { status: 'disconnected' },
+        })),
+      };
+    }
+  }
+
+  // Case 4: Object containing `workspaces` array without schemaVersion
+  if ('workspaces' in value && Array.isArray((value as any).workspaces)) {
+    const rawList = (value as any).workspaces;
+    return {
+      schemaVersion: 2,
+      windowToWorkspace: (value as any).windowToWorkspace || {},
+      workspaces: rawList.map((ws: any) => ({
+        id: ws.id || String(Date.now() + Math.random()),
+        name: ws.name || 'Untitled Workspace',
+        color: ws.color || 'indigo',
+        createdAt: ws.createdAt || new Date().toISOString(),
+        updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
+        tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
+        live: ws.live || { status: 'disconnected' },
+      })),
     };
   }
 
@@ -42,8 +109,25 @@ export class ChromeLocalWorkspaceRepository implements WorkspaceRepository {
   private queue: Promise<unknown> = Promise.resolve();
 
   async read(): Promise<WorkspaceStore> {
-    const result = await browser.storage.local.get(STORAGE_KEY);
-    return migrateWorkspaceStore(result[STORAGE_KEY]);
+    const result = await browser.storage.local.get(null);
+    if (result && result[STORAGE_KEY]) {
+      const migrated = migrateWorkspaceStore(result[STORAGE_KEY]);
+      if (migrated.workspaces.length > 0) return migrated;
+    }
+
+    // Fallback: search all other keys in local storage for legacy workspace data
+    if (result) {
+      for (const [key, val] of Object.entries(result)) {
+        if (key === STORAGE_KEY) continue;
+        const migrated = migrateWorkspaceStore(val);
+        if (migrated.workspaces.length > 0) {
+          await browser.storage.local.set({ [STORAGE_KEY]: migrated });
+          return migrated;
+        }
+      }
+    }
+
+    return EMPTY_STORE;
   }
 
   async list(): Promise<Workspace[]> {

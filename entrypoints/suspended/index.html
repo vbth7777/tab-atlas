@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suspended Tab</title>
+  <link id="tab-favicon" rel="icon" href="/icon/16.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #0b1220;
+      color: #e8ecf5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      padding: 20px;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 32px 28px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+      background: #152033;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: #38bdf8;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #38bdf8;
+    }
+    .favicon-wrap {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: #1e293b;
+      display: grid;
+      place-items: center;
+      border: 1px solid #475569;
+    }
+    .favicon-wrap img {
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      object-fit: contain;
+    }
+    h2 {
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 1.4;
+      color: #f8fafc;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .url-text {
+      font-size: 12px;
+      color: #94a3b8;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 4px;
+      padding: 10px 24px;
+      background: #0284c7;
+      color: #ffffff;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .btn:hover {
+      background: #0369a1;
+    }
+    .status-hint {
+      font-size: 11px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+      </svg>
+      Atlas Tab Suspended
+    </div>
+    <div class="favicon-wrap">
+      <img id="tab-icon" src="/icon/32.png" alt="">
+    </div>
+    <h2 id="tab-title">Saved Workspace Tab</h2>
+    <p class="url-text" id="tab-url">Click or switch to this tab to load.</p>
+    <button class="btn" id="load-btn">Load Tab</button>
+    <p class="status-hint">Click anywhere or switch to this tab to resume</p>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

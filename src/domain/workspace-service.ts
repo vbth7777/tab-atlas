@@ -28,7 +28,8 @@ export function extractWebUrl(url: string | undefined): string | null {
 }
 
 export function toSavedTab(tab: TabSnapshot, savedAt: string): SavedTab | null {
-  const url = extractWebUrl(tab.url);
+  const candidateUrl = tab.pendingUrl || tab.url;
+  const url = extractWebUrl(candidateUrl);
   if (!url) return null;
 
   let hostname = url;
@@ -38,11 +39,31 @@ export function toSavedTab(tab: TabSnapshot, savedAt: string): SavedTab | null {
     // Ignore malformed URLs; Chrome will still receive them when reopened.
   }
 
+  let title = tab.title?.trim();
+  let faviconUrl = tab.favIconUrl;
+
+  // If tab is currently showing suspended placeholder, recover real title & favicon from URL params
+  if (candidateUrl && candidateUrl.startsWith('chrome-extension://')) {
+    try {
+      const urlObj = new URL(candidateUrl);
+      const paramTitle = urlObj.searchParams.get('title');
+      const paramFavicon = urlObj.searchParams.get('favicon') || urlObj.searchParams.get('icon');
+      if (paramTitle && (!title || title === 'Suspended Tab' || title === 'Saved Workspace Tab')) {
+        title = paramTitle.trim();
+      }
+      if (paramFavicon && (!faviconUrl || faviconUrl.includes('chrome-extension://'))) {
+        faviconUrl = paramFavicon;
+      }
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+
   return {
     id: createId('tab'),
-    title: tab.title?.trim() || hostname,
+    title: title || hostname,
     url,
-    faviconUrl: tab.favIconUrl,
+    faviconUrl,
     hostname,
     savedAt,
   };
@@ -63,7 +84,7 @@ function replaceWorkspace(store: WorkspaceStore, workspace: Workspace): Workspac
 }
 
 function unbindWindowsOf(store: WorkspaceStore, workspaceId: string): Record<string, string> {
-  return Object.fromEntries(Object.entries(store.windowToWorkspace).filter(([, id]) => id !== workspaceId));
+  return Object.fromEntries(Object.entries(store.windowToWorkspace).filter(([, id]) => id !== workspaceId)) as Record<string, string>;
 }
 
 export function findWorkspaceByWindow(store: WorkspaceStore, windowId: number): Workspace | null {
@@ -74,7 +95,7 @@ export function findWorkspaceByWindow(store: WorkspaceStore, windowId: number): 
 /** Creates a live workspace that owns the window the tabs came from. */
 export async function createLiveWorkspace(
   repository: WorkspaceRepository,
-  input: { name: string; color: WorkspaceColor; windowId: number; tabs: TabSnapshot[] },
+  input: { name: string; color: WorkspaceColor; windowId: number; tabs: TabSnapshot[]; isIncognito?: boolean },
 ): Promise<Workspace> {
   const name = input.name.trim();
   if (!name) throw new Error('Workspace name is required.');
@@ -85,7 +106,7 @@ export async function createLiveWorkspace(
     name,
     color: input.color,
     tabs: toSavedTabs(input.tabs, now),
-    live: { status: 'connected', windowId: input.windowId, lastSyncedAt: now },
+    live: { status: 'connected', windowId: input.windowId, isIncognito: input.isIncognito, lastSyncedAt: now },
     createdAt: now,
     updatedAt: now,
   };
@@ -102,7 +123,7 @@ export async function createLiveWorkspace(
 /** Mirrors the live contents of a window into the workspace that owns it. */
 export async function syncWorkspaceFromWindow(
   repository: WorkspaceRepository,
-  input: { windowId: number; tabs: TabSnapshot[] },
+  input: { windowId: number; tabs: TabSnapshot[]; isIncognito?: boolean },
 ): Promise<Workspace | null> {
   const now = new Date().toISOString();
 
@@ -110,10 +131,29 @@ export async function syncWorkspaceFromWindow(
     const workspace = findWorkspaceByWindow(store, input.windowId);
     if (!workspace) return { store, result: null };
 
+    const newTabs = toSavedTabs(input.tabs, now);
+
+    // Protection against transient empty/loading tab snapshots:
+    // 1. If window has tabs, but toSavedTabs returned 0 web tabs (all loading / pending): keep existing tabs.
+    // 2. If some tabs are still in 'loading' status and newTabs count is smaller than existing workspace tabs: keep existing tabs.
+    const hasLoadingTabs = input.tabs.some((t) => t.status === 'loading' || (!t.url && !t.pendingUrl));
+    let effectiveTabs = newTabs;
+
+    if (input.tabs.length > 0 && newTabs.length === 0 && workspace.tabs.length > 0) {
+      effectiveTabs = workspace.tabs;
+    } else if (hasLoadingTabs && newTabs.length < workspace.tabs.length && workspace.tabs.length > 0) {
+      effectiveTabs = workspace.tabs;
+    }
+
     const updated: Workspace = {
       ...workspace,
-      tabs: toSavedTabs(input.tabs, now),
-      live: { status: 'connected', windowId: input.windowId, lastSyncedAt: now },
+      tabs: effectiveTabs,
+      live: {
+        status: 'connected',
+        windowId: input.windowId,
+        isIncognito: input.isIncognito ?? workspace.live.isIncognito,
+        lastSyncedAt: now,
+      },
       updatedAt: now,
     };
 
@@ -123,7 +163,7 @@ export async function syncWorkspaceFromWindow(
 
 export async function bindWindowToWorkspace(
   repository: WorkspaceRepository,
-  input: { workspaceId: string; windowId: number },
+  input: { workspaceId: string; windowId: number; isIncognito?: boolean },
 ): Promise<void> {
   const now = new Date().toISOString();
 
@@ -139,7 +179,12 @@ export async function bindWindowToWorkspace(
     return {
       store: replaceWorkspace(bound, {
         ...workspace,
-        live: { status: 'connected', windowId: input.windowId, lastSyncedAt: now },
+        live: {
+          status: 'connected',
+          windowId: input.windowId,
+          isIncognito: input.isIncognito,
+          lastSyncedAt: now,
+        },
         updatedAt: now,
       }),
       result: undefined,
@@ -214,3 +259,98 @@ export function filterWorkspaces(workspaces: Workspace[], query: string): Worksp
       .includes(normalized),
   );
 }
+
+export function mergeSavedTabs(localTabs: SavedTab[], cloudTabs: SavedTab[]): SavedTab[] {
+  const merged: SavedTab[] = [...localTabs];
+
+  const localUrlCounts = new Map<string, number>();
+  for (const tab of localTabs) {
+    if (tab.url) {
+      localUrlCounts.set(tab.url, (localUrlCounts.get(tab.url) || 0) + 1);
+    }
+  }
+
+  const matchedCloudCounts = new Map<string, number>();
+
+  for (const cloudTab of cloudTabs) {
+    if (!cloudTab.url) continue;
+
+    const availableLocal = localUrlCounts.get(cloudTab.url) || 0;
+    const consumed = matchedCloudCounts.get(cloudTab.url) || 0;
+
+    if (consumed < availableLocal) {
+      matchedCloudCounts.set(cloudTab.url, consumed + 1);
+    } else {
+      merged.push(cloudTab);
+    }
+  }
+
+  return merged;
+}
+
+export function mergeWorkspaceStores(
+  localStore: WorkspaceStore,
+  cloudStore: WorkspaceStore | null | undefined
+): WorkspaceStore {
+  if (!cloudStore || !Array.isArray(cloudStore.workspaces)) {
+    return localStore;
+  }
+
+  const workspaceMap = new Map<string, Workspace>();
+
+  for (const workspace of localStore.workspaces) {
+    workspaceMap.set(workspace.id, workspace);
+  }
+
+  for (const cloudWs of cloudStore.workspaces) {
+    const localWs = workspaceMap.get(cloudWs.id);
+    if (!localWs) {
+      // New workspace from cloud, set local live status to disconnected
+      workspaceMap.set(cloudWs.id, {
+        ...cloudWs,
+        live: { status: 'disconnected' },
+      });
+    } else {
+      const localTime = localWs.updatedAt || localWs.createdAt || '';
+      const cloudTime = cloudWs.updatedAt || cloudWs.createdAt || '';
+
+      if (cloudTime.localeCompare(localTime) > 0) {
+        // Cloud is strictly newer: use cloud name, color, and tabs
+        // If local is currently connected/live, merge tabs so live unsaved tabs aren't lost before syncing with Chrome window
+        const isLive = localWs.live.status === 'connected';
+        const mergedTabs = isLive ? mergeSavedTabs(localWs.tabs, cloudWs.tabs) : cloudWs.tabs;
+
+        workspaceMap.set(cloudWs.id, {
+          ...localWs,
+          name: cloudWs.name,
+          color: cloudWs.color,
+          tabs: mergedTabs,
+          updatedAt: cloudTime,
+        });
+      } else if (localTime.localeCompare(cloudTime) > 0) {
+        // Local is strictly newer: preserve local workspace (including any tab deletions)
+        workspaceMap.set(cloudWs.id, {
+          ...localWs,
+        });
+      } else {
+        // Timestamps equal or missing (initial sync): union tabs so no tab from local or cloud is lost initially
+        const mergedTabs = mergeSavedTabs(localWs.tabs, cloudWs.tabs);
+        workspaceMap.set(cloudWs.id, {
+          ...localWs,
+          tabs: mergedTabs,
+        });
+      }
+    }
+  }
+
+  const mergedWorkspaces = Array.from(workspaceMap.values()).sort((a, b) =>
+    (b.updatedAt || '').localeCompare(a.updatedAt || '')
+  );
+
+  return {
+    schemaVersion: 2,
+    workspaces: mergedWorkspaces,
+    windowToWorkspace: localStore.windowToWorkspace || {},
+  };
+}
+

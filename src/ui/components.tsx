@@ -6,6 +6,7 @@ type IconName =
   | 'chevron-right'
   | 'copy'
   | 'folder'
+  | 'incognito'
   | 'layout'
   | 'plus'
   | 'refresh'
@@ -21,6 +22,7 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     'chevron-right': <path d="m9 18 6-6-6-6" />,
     copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
     folder: <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" />,
+    incognito: <><path d="M2 10h20M6 10l2-6h8l2 6" /><circle cx="7" cy="16" r="3" /><circle cx="17" cy="16" r="3" /><path d="M10 16h4" /></>,
     layout: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M9 9h12" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     refresh: <><path d="M20 12a8 8 0 1 1-2.3-5.7" /><path d="M20 4v5h-5" /></>,
@@ -41,8 +43,9 @@ export function ColorPicker({ value, onChange }: { value: WorkspaceColor; onChan
 /** State is always spelled out in text, never signalled by colour alone. */
 export function WorkspaceBadge({ workspace }: { workspace: Workspace }) {
   const live = workspace.live.status === 'connected';
-  return <span className={`state-badge ${live ? 'is-live' : 'is-closed'}`}>
+  const isIncognito = live && Boolean(workspace.live.isIncognito);
+  return <span className={`state-badge ${live ? (isIncognito ? 'is-incognito' : 'is-live') : 'is-closed'}`}>
     <span className="state-dot" />
-    {live ? 'LIVE' : 'WINDOW CLOSED'}
+    {live ? (isIncognito ? 'LIVE (INCOGNITO)' : 'LIVE') : 'WINDOW CLOSED'}
   </span>;
 }

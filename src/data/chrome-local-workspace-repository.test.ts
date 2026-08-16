@@ -33,6 +33,41 @@ describe('workspace store migration', () => {
     expect(migrateWorkspaceStore(store)).toEqual(store);
   });
 
+  it('migrates raw array of workspaces without losing data', () => {
+    const rawArray = [
+      { id: 'ws_1', name: 'Legacy Array Workspace', tabs: [{ id: 1, url: 'https://google.com' }] },
+    ];
+    const migrated = migrateWorkspaceStore(rawArray);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.workspaces).toHaveLength(1);
+    expect(migrated.workspaces[0].name).toBe('Legacy Array Workspace');
+  });
+
+  it('migrates un-versioned object containing workspaces', () => {
+    const unversioned = {
+      workspaces: [
+        { id: 'ws_2', name: 'Unversioned Object Workspace', tabs: [] },
+      ],
+    };
+    const migrated = migrateWorkspaceStore(unversioned);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.workspaces).toHaveLength(1);
+    expect(migrated.workspaces[0].name).toBe('Unversioned Object Workspace');
+  });
+
+  it('unwraps nested storage key object wrapper', () => {
+    const nested = {
+      'tab-atlas.workspace-store': {
+        schemaVersion: 2,
+        workspaces: [{ id: 'ws_3', name: 'Nested Workspace', tabs: [] }],
+      },
+    };
+    const migrated = migrateWorkspaceStore(nested);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.workspaces).toHaveLength(1);
+    expect(migrated.workspaces[0].name).toBe('Nested Workspace');
+  });
+
   it('falls back to an empty store for unrecognised data', () => {
     expect(migrateWorkspaceStore({ schemaVersion: 0, sessions: [] })).toEqual({ schemaVersion: 2, workspaces: [], windowToWorkspace: {} });
   });
