@@ -84,7 +84,7 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
   }
 
   // Case 4: Object containing `workspaces` array without schemaVersion
-  if ('workspaces' in value && Array.isArray((value as any).workspaces)) {
+  if (value && typeof value === 'object' && 'workspaces' in value && Array.isArray((value as any).workspaces)) {
     const rawList = (value as any).workspaces;
     return {
       schemaVersion: 2,
