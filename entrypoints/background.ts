@@ -179,9 +179,9 @@ async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
     // In Incognito mode: Native Tab Discarding for background tabs to prevent CPU/RAM lag
     if (isIncog && browser.tabs.discard) {
       const discardedTabIds = new Set<number>();
-      const activeTabId = created.tabs?.[0]?.id;
+      const activeTabId = created?.tabs?.[0]?.id;
 
-      const incognitoDiscarder = (tabId: number, changeInfo: Browser.tabs.OnUpdatedChangeInfoType, tab: Browser.tabs.Tab) => {
+      const incognitoDiscarder = (tabId: number, _changeInfo: any, tab: any) => {
         if (tab.windowId === createdId && tabId !== activeTabId && !tab.active && !discardedTabIds.has(tabId)) {
           if (tab.url && tab.url !== 'about:blank') {
             discardedTabIds.add(tabId);
@@ -397,4 +397,5 @@ export default defineBackground(() => {
   browser.runtime.onInstalled.addListener(() => void reconcile());
   void reconcile();
 });
+
 

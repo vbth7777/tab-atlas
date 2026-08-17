@@ -25,15 +25,16 @@ export default function Dashboard() {
   const [color, setColor] = useState<WorkspaceColor>('indigo');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const storeVersion = useWorkspaceStoreVersion();
 
   const loadAll = async () => {
     try {
-      const response = await sendMessage({ type: 'list-workspaces' });
-      setWorkspaces(response.workspaces);
+      const listRes = await sendMessage({ type: 'list-workspaces' });
+      setWorkspaces(listRes.workspaces);
       setSelectedId((current) =>
-        current && response.workspaces.some((item) => item.id === current) ? current : response.workspaces[0]?.id ?? null,
+        current && listRes.workspaces.some((item) => item.id === current) ? current : listRes.workspaces[0]?.id ?? null,
       );
       setLoading(false);
     } catch (error: any) {
@@ -44,9 +45,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-
     loadAll().catch((error: Error) => !cancelled && setNotice(error.message));
-
     return () => { cancelled = true; };
   }, [storeVersion]);
 
@@ -126,13 +125,16 @@ export default function Dashboard() {
       className={`nav-workspace ${selected?.id === workspace.id ? 'active' : ''}`}
       key={workspace.id}
       onClick={() => select(workspace)}
+      title={`${workspace.name} (${workspace.tabs.length} tabs)`}
     >
       <span className={`workspace-color ${workspace.color}`} />
-      <span>{workspace.name}</span>
-      <small>
-        {workspace.live.status === 'connected' && workspace.live.isIncognito ? '🕶️ ' : ''}
-        {workspace.tabs.length}
-      </small>
+      <span className="nav-workspace-name">{workspace.name}</span>
+      {workspace.live.status === 'connected' && workspace.live.isIncognito && (
+        <span className="incognito-indicator" title="Live in Incognito mode">
+          <Icon name="incognito" size={13} />
+        </span>
+      )}
+      <small>{workspace.tabs.length}</small>
     </button>)}</nav>
   </>;
 
@@ -144,25 +146,36 @@ export default function Dashboard() {
       {navSection('WINDOW CLOSED', closed)}
       {!filtered.length && !loading && <p className="empty-copy">No workspaces match this search.</p>}
       
-      <div className="sidebar-footer" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
+      <div className="sidebar-footer">
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span>Local-only vault</span>
           <span className="privacy-dot" />
           <span>No account required</span>
         </div>
-        <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
-          <button className="ghost-button" style={{ fontSize: '10px', padding: '4px 8px' }} onClick={exportJson}>
-            Export JSON
-          </button>
-          <button className="ghost-button" style={{ fontSize: '10px', padding: '4px 8px' }} onClick={() => fileInputRef.current?.click()}>
-            Import JSON
-          </button>
-        </div>
-        <input type="file" ref={fileInputRef} accept=".json" onChange={handleFileImport} style={{ display: 'none' }} />
       </div>
     </aside>
 
     <section className="dashboard-content">
+      {/* Top Settings & Backup Bar */}
+      <div className="top-settings-bar">
+        <div className="settings-status-group">
+          <span className="privacy-dot" style={{ background: '#34d399' }} />
+          <span className="settings-status-text">
+            <strong>Local-only Vault</strong> · Fully private & offline
+          </span>
+        </div>
+
+        <div className="settings-actions-group">
+          <button className="ghost-button compact" onClick={exportJson} title="Export all workspaces to JSON">
+            <span>Export JSON</span>
+          </button>
+          <button className="ghost-button compact" onClick={() => fileInputRef.current?.click()} title="Import workspaces from JSON file">
+            <span>Import JSON</span>
+          </button>
+        </div>
+        <input type="file" ref={fileInputRef} accept=".json" onChange={handleFileImport} style={{ display: 'none' }} />
+      </div>
+
       <header className="dashboard-header">
         <div><p className="eyebrow">YOUR LIVE TAB LIBRARY</p><h1>Every workspace stays current.</h1></div>
         <label className="search-field">
@@ -173,10 +186,10 @@ export default function Dashboard() {
 
       {notice && <p className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><Icon name="x" size={16} /></button></p>}
 
-      {loading ? <p className="empty-copy">Loading workspaces.</p> : !selected ? <section className="dashboard-empty">
+      {loading ? <p className="empty-copy">Loading workspaces…</p> : !selected ? <section className="dashboard-empty">
         <span className="empty-icon"><Icon name="archive" size={28} /></span>
         <h2>No workspaces yet</h2>
-        <p>Open Tab Atlas from Chrome's toolbar to turn the window you are browsing into a live workspace. Tabs you open or close are saved automatically.</p>
+        <p>Open Tab Atlas from Chrome’s toolbar to turn the window you are browsing into a live workspace. Tabs you open or close are saved automatically.</p>
       </section> : <section className="workspace-detail">
         <div className="detail-toolbar">
           <div>{editing ? <form className="inline-edit" onSubmit={submitMetadata}>

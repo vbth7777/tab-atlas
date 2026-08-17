@@ -40,7 +40,7 @@ describe('workspace store migration', () => {
     const migrated = migrateWorkspaceStore(rawArray);
     expect(migrated.schemaVersion).toBe(2);
     expect(migrated.workspaces).toHaveLength(1);
-    expect(migrated.workspaces[0].name).toBe('Legacy Array Workspace');
+    expect(migrated.workspaces[0]?.name).toBe('Legacy Array Workspace');
   });
 
   it('migrates un-versioned object containing workspaces', () => {
@@ -52,7 +52,7 @@ describe('workspace store migration', () => {
     const migrated = migrateWorkspaceStore(unversioned);
     expect(migrated.schemaVersion).toBe(2);
     expect(migrated.workspaces).toHaveLength(1);
-    expect(migrated.workspaces[0].name).toBe('Unversioned Object Workspace');
+    expect(migrated.workspaces[0]?.name).toBe('Unversioned Object Workspace');
   });
 
   it('unwraps nested storage key object wrapper', () => {
@@ -65,7 +65,7 @@ describe('workspace store migration', () => {
     const migrated = migrateWorkspaceStore(nested);
     expect(migrated.schemaVersion).toBe(2);
     expect(migrated.workspaces).toHaveLength(1);
-    expect(migrated.workspaces[0].name).toBe('Nested Workspace');
+    expect(migrated.workspaces[0]?.name).toBe('Nested Workspace');
   });
 
   it('falls back to an empty store for unrecognised data', () => {

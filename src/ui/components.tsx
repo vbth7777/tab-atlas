@@ -3,6 +3,7 @@ import type { Workspace, WorkspaceColor } from '@/src/domain/workspace';
 type IconName =
   | 'archive'
   | 'arrow-up-right'
+  | 'chevron-left'
   | 'chevron-right'
   | 'copy'
   | 'folder'
@@ -19,6 +20,7 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     archive: <><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10h14V9M10 13h4" /></>,
     'arrow-up-right': <><path d="M7 17 17 7M8 7h9v9" /></>,
+    'chevron-left': <path d="m15 18-6-6 6-6" />,
     'chevron-right': <path d="m9 18 6-6-6-6" />,
     copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
     folder: <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" />,
