@@ -1,4 +1,4 @@
-import type { SavedTab, TabSnapshot, Workspace, WorkspaceColor, WorkspaceStore } from '@/src/domain/workspace';
+import type { SavedTab, TabSnapshot, Workspace, WorkspaceColor, WorkspaceHistoryEntry, WorkspaceStore } from '@/src/domain/workspace';
 import type { WorkspaceRepository } from '@/src/data/workspace-repository';
 
 function createId(prefix: string): string {
@@ -288,6 +288,79 @@ export function mergeSavedTabs(localTabs: SavedTab[], cloudTabs: SavedTab[]): Sa
   return merged;
 }
 
+function mergeWorkspaceHistories(
+  localHistory: WorkspaceHistoryEntry[] = [],
+  cloudHistory: WorkspaceHistoryEntry[] = []
+): WorkspaceHistoryEntry[] {
+  const seen = new Set<string>();
+  const combined: WorkspaceHistoryEntry[] = [];
+
+  for (const item of [...localHistory, ...cloudHistory]) {
+    const key = `${item.url}_${item.timestamp}_${item.eventType}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      combined.push(item);
+    }
+  }
+
+  combined.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+  return combined.slice(0, MAX_WORKSPACE_HISTORY);
+}
+
+export const MAX_WORKSPACE_HISTORY = 200;
+
+export function trimWorkspaceHistory(
+  history: WorkspaceHistoryEntry[],
+  maxLimit = MAX_WORKSPACE_HISTORY
+): WorkspaceHistoryEntry[] {
+  return history.slice(0, maxLimit);
+}
+
+export async function recordWorkspaceHistoryBatch(
+  repository: WorkspaceRepository,
+  workspaceId: string,
+  entries: Array<Omit<WorkspaceHistoryEntry, 'id'>>
+): Promise<Workspace> {
+  const store = await repository.read();
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) throw new Error('Workspace not found.');
+
+  const newEntries: WorkspaceHistoryEntry[] = entries.map((entry) => ({
+    id: createId('hist'),
+    ...entry,
+  }));
+
+  const existingHistory = Array.isArray(workspace.history) ? workspace.history : [];
+  const updatedHistory = trimWorkspaceHistory([...newEntries, ...existingHistory]);
+
+  const updatedWorkspace: Workspace = {
+    ...workspace,
+    history: updatedHistory,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await repository.replace(replaceWorkspace(store, updatedWorkspace));
+  return updatedWorkspace;
+}
+
+export async function clearWorkspaceHistory(
+  repository: WorkspaceRepository,
+  workspaceId: string
+): Promise<Workspace> {
+  const store = await repository.read();
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) throw new Error('Workspace not found.');
+
+  const updatedWorkspace: Workspace = {
+    ...workspace,
+    history: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  await repository.replace(replaceWorkspace(store, updatedWorkspace));
+  return updatedWorkspace;
+}
+
 export function mergeWorkspaceStores(
   localStore: WorkspaceStore,
   cloudStore: WorkspaceStore | null | undefined
@@ -308,11 +381,13 @@ export function mergeWorkspaceStores(
       // New workspace from cloud, set local live status to disconnected
       workspaceMap.set(cloudWs.id, {
         ...cloudWs,
+        history: Array.isArray(cloudWs.history) ? cloudWs.history : [],
         live: { status: 'disconnected' },
       });
     } else {
       const localTime = localWs.updatedAt || localWs.createdAt || '';
       const cloudTime = cloudWs.updatedAt || cloudWs.createdAt || '';
+      const mergedHistory = mergeWorkspaceHistories(localWs.history, cloudWs.history);
 
       if (cloudTime.localeCompare(localTime) > 0) {
         // Cloud is strictly newer: use cloud name, color, and tabs
@@ -325,12 +400,14 @@ export function mergeWorkspaceStores(
           name: cloudWs.name,
           color: cloudWs.color,
           tabs: mergedTabs,
+          history: mergedHistory,
           updatedAt: cloudTime,
         });
       } else if (localTime.localeCompare(cloudTime) > 0) {
         // Local is strictly newer: preserve local workspace (including any tab deletions)
         workspaceMap.set(cloudWs.id, {
           ...localWs,
+          history: mergedHistory,
         });
       } else {
         // Timestamps equal or missing (initial sync): union tabs so no tab from local or cloud is lost initially
@@ -338,6 +415,7 @@ export function mergeWorkspaceStores(
         workspaceMap.set(cloudWs.id, {
           ...localWs,
           tabs: mergedTabs,
+          history: mergedHistory,
         });
       }
     }

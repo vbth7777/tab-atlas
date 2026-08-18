@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   bindWindowToWorkspace,
+  clearWorkspaceHistory,
   createLiveWorkspace,
   disconnectWindow,
   filterWorkspaces,
   mergeSavedTabs,
   mergeWorkspaceStores,
   reconcileOpenWindows,
+  recordWorkspaceHistoryBatch,
   syncWorkspaceFromWindow,
+  trimWorkspaceHistory,
   updateWorkspaceMetadata,
 } from '@/src/domain/workspace-service';
 import { EMPTY_STORE, type Workspace, type WorkspaceStore } from '@/src/domain/workspace';
@@ -310,3 +313,75 @@ describe('mergeWorkspaceStores', () => {
     expect(merged).toHaveLength(3);
   });
 });
+
+describe('workspace tab history', () => {
+  it('records and trims history batches for a workspace', async () => {
+    const repository = new MemoryRepository();
+    const ws = await createLiveWorkspace(repository, {
+      name: 'Dev',
+      color: 'teal',
+      windowId: 1,
+      tabs: [tab(1, 'https://github.com')],
+    });
+
+    const updated = await recordWorkspaceHistoryBatch(repository, ws.id, [
+      {
+        url: 'https://developer.mozilla.org',
+        title: 'MDN Web Docs',
+        hostname: 'developer.mozilla.org',
+        timestamp: '2026-08-19T10:00:00Z',
+        eventType: 'visited',
+      },
+      {
+        url: 'https://vitejs.dev',
+        title: 'Vite',
+        hostname: 'vitejs.dev',
+        timestamp: '2026-08-19T10:05:00Z',
+        eventType: 'closed',
+        batchId: 'batch_123',
+      },
+    ]);
+
+    expect(updated.history).toHaveLength(2);
+    expect(updated.history?.[0]?.title).toBe('MDN Web Docs');
+    expect(updated.history?.[1]?.eventType).toBe('closed');
+    expect(updated.history?.[1]?.batchId).toBe('batch_123');
+
+    // Test trimming
+    const manyEntries = Array.from({ length: 250 }, (_, i) => ({
+      id: `h_${i}`,
+      url: `https://example.com/${i}`,
+      title: `Page ${i}`,
+      hostname: 'example.com',
+      timestamp: new Date(Date.now() - i * 1000).toISOString(),
+      eventType: 'visited' as const,
+    }));
+    const trimmed = trimWorkspaceHistory(manyEntries, 200);
+    expect(trimmed).toHaveLength(200);
+  });
+
+  it('clears history for a workspace', async () => {
+    const repository = new MemoryRepository();
+    const ws = await createLiveWorkspace(repository, {
+      name: 'Dev',
+      color: 'teal',
+      windowId: 1,
+      tabs: [tab(1, 'https://github.com')],
+    });
+
+    await recordWorkspaceHistoryBatch(repository, ws.id, [
+      {
+        url: 'https://example.com',
+        title: 'Example',
+        hostname: 'example.com',
+        timestamp: '2026-08-19T10:00:00Z',
+        eventType: 'closed',
+      },
+    ]);
+
+    const cleared = await clearWorkspaceHistory(repository, ws.id);
+    expect(cleared.history).toEqual([]);
+    expect((await repository.get(ws.id))?.history).toEqual([]);
+  });
+});
+

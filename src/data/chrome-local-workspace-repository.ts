@@ -41,6 +41,7 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
         ...ws,
         live: ws.live || { status: 'disconnected' },
         tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
+        history: Array.isArray(ws.history) ? ws.history : [],
         createdAt: ws.createdAt || new Date().toISOString(),
         updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
       })),
@@ -55,6 +56,7 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
         ...workspace,
         live: { status: 'disconnected' },
         tabs: Array.isArray(workspace.tabs) ? workspace.tabs : [],
+        history: [],
         createdAt: workspace.createdAt || new Date().toISOString(),
         updatedAt: workspace.updatedAt || workspace.createdAt || new Date().toISOString(),
       })),
@@ -77,6 +79,7 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
           createdAt: ws.createdAt || new Date().toISOString(),
           updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
           tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
+          history: Array.isArray(ws.history) ? ws.history : [],
           live: ws.live || { status: 'disconnected' },
         })),
       };
@@ -96,6 +99,7 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
         createdAt: ws.createdAt || new Date().toISOString(),
         updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
         tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
+        history: Array.isArray(ws.history) ? ws.history : [],
         live: ws.live || { status: 'disconnected' },
       })),
     };

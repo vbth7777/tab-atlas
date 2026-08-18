@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import type { Workspace, WorkspaceColor } from '@/src/domain/workspace';
+import { useEffect, useState, useRef } from 'react';
+import type { Workspace, WorkspaceColor, WorkspaceHistoryEntry } from '@/src/domain/workspace';
 import { sendMessage, type WindowContext } from '@/src/shared/messages';
 import { ColorPicker, Icon, WorkspaceBadge } from '@/src/ui/components';
 import { useWorkspaceStoreVersion } from '@/src/ui/use-workspace-store-version';
@@ -10,32 +10,39 @@ export default function App() {
   const [color, setColor] = useState<WorkspaceColor>('indigo');
   const [context, setContext] = useState<WindowContext | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [recentlyClosed, setRecentlyClosed] = useState<WorkspaceHistoryEntry[]>([]);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const storeVersion = useWorkspaceStoreVersion();
 
   const PAGE_SIZE = 4;
   const totalPages = Math.max(1, Math.ceil(workspaces.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const paginatedWorkspaces = workspaces.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const storeVersion = useWorkspaceStoreVersion();
+
+  const loadData = async () => {
+    try {
+      const [list, windowContext, closedRes] = await Promise.all([
+        sendMessage({ type: 'list-workspaces' }),
+        sendMessage({ type: 'get-window-context' }),
+        sendMessage({ type: 'get-recently-closed' }),
+      ]);
+
+      setWorkspaces(list.workspaces);
+      setContext(windowContext.context);
+      setRecentlyClosed(closedRes.entries || []);
+    } catch (error: any) {
+      setStatus(error.message || 'Error loading extension data');
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
-    const load = async () => {
-      const [list, windowContext] = await Promise.all([
-        sendMessage({ type: 'list-workspaces' }),
-        sendMessage({ type: 'get-window-context' }),
-      ]);
-
-      if (cancelled) return;
-      setWorkspaces(list.workspaces);
-      setContext(windowContext.context);
-    };
-
-    load().catch((error: Error) => !cancelled && setStatus(error.message));
+    loadData().catch((error: Error) => !cancelled && setStatus(error.message));
     return () => { cancelled = true; };
   }, [storeVersion]);
 
@@ -43,7 +50,9 @@ export default function App() {
     setBusy(true);
     setStatus('');
     try {
-      setStatus(await action());
+      const res = await action();
+      setStatus(res);
+      await loadData();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Something went wrong.');
     } finally {
@@ -58,10 +67,10 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `tab-atlas-workspaces-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `tab-atlas-backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      return 'Exported workspaces JSON file.';
+      return 'Exported workspaces JSON backup.';
     });
   };
 
@@ -87,11 +96,39 @@ export default function App() {
     return run(async () => {
       const response = await sendMessage({
         type: 'create-live-workspace',
-        name: name || `Workspace · ${new Date().toLocaleDateString()}`,
+        name: name || `Workspace • ${new Date().toLocaleDateString()}`,
         color,
       });
       setName('');
       return `“${response.workspace.name}” now tracks this window live.`;
+    });
+  };
+
+  const lastClosedItem = recentlyClosed[0];
+  const lastBatchItems = lastClosedItem?.batchId
+    ? recentlyClosed.filter((item) => item.batchId === lastClosedItem.batchId)
+    : [];
+
+  const handleQuickUndo = () => {
+    if (!lastClosedItem) return;
+    return run(async () => {
+      if (lastBatchItems.length > 1) {
+        const res = await sendMessage({
+          type: 'restore-closed-batch',
+          urls: lastBatchItems.map((i) => i.url),
+          isIncognito: lastBatchItems[0]?.isIncognito,
+          windowId: context?.windowId ?? undefined,
+        });
+        return `Restored ${res.count} closed tabs.`;
+      } else {
+        await sendMessage({
+          type: 'restore-closed-tab',
+          url: lastClosedItem.url,
+          isIncognito: lastClosedItem.isIncognito,
+          windowId: context?.windowId ?? undefined,
+        });
+        return `Restored tab: ${lastClosedItem.title}`;
+      }
     });
   };
 
@@ -109,6 +146,28 @@ export default function App() {
         </div>
       </header>
       <input type="file" ref={fileInputRef} accept=".json" onChange={handleFileImport} style={{ display: 'none' }} />
+
+      {lastClosedItem && (
+        <aside className="popup-undo-banner">
+          <div className="popup-undo-info">
+            <Icon name="undo" size={13} />
+            <span className="popup-undo-text">
+              {lastBatchItems.length > 1
+                ? `Closed ${lastBatchItems.length} tabs together`
+                : `Closed: ${lastClosedItem.title}`}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="popup-undo-btn"
+            onClick={handleQuickUndo}
+            disabled={busy}
+            title="Undo closed tab(s)"
+          >
+            Undo
+          </button>
+        </aside>
+      )}
 
       {linked ? (
         <>
@@ -156,7 +215,7 @@ export default function App() {
             <button
               className="workspace-row"
               disabled={busy}
-              title={`Mở “${workspace.name}” (Cửa sổ thường)`}
+              title={`Switch to “${workspace.name}” (Normal Window)`}
               onClick={() =>
                 run(async () => {
                   await sendMessage({ type: 'activate-workspace', workspaceId: workspace.id, incognito: false });
@@ -168,7 +227,7 @@ export default function App() {
               <span className="workspace-row-copy">
                 <strong>{workspace.name}</strong>
                 <small>
-                  {workspace.tabs.length} tabs · {workspace.live.status === 'connected' ? (workspace.live.isIncognito ? 'Live (Ẩn danh)' : 'Live now') : 'Window closed'}
+                  {workspace.tabs.length} tabs • {workspace.live.status === 'connected' ? (workspace.live.isIncognito ? 'Live (Incognito)' : 'Live now') : 'Window closed'}
                 </small>
               </span>
             </button>
@@ -176,8 +235,8 @@ export default function App() {
               <button
                 className="row-action-btn"
                 disabled={busy}
-                title="Mở trong cửa sổ ẩn danh (Incognito)"
-                aria-label={`Mở ${workspace.name} ở chế độ ẩn danh`}
+                title="Open in Incognito window"
+                aria-label={`Open ${workspace.name} in Incognito`}
                 onClick={(e) => {
                   e.stopPropagation();
                   run(async () => {
