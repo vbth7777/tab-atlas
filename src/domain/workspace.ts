@@ -36,11 +36,29 @@ export interface WorkspaceLiveState {
   lastSyncedAt?: string;
 }
 
+export type TabHistoryEventType = 'opened' | 'visited' | 'closed' | 'window_closed';
+
+export interface WorkspaceHistoryEntry {
+  id: string;
+  tabId?: number;
+  url: string;
+  title: string;
+  faviconUrl?: string;
+  hostname: string;
+  timestamp: string;
+  eventType: TabHistoryEventType;
+  isIncognito?: boolean;
+  batchId?: string;
+  tabCount?: number;
+  tabsSnapshot?: Array<{ title: string; url: string; faviconUrl?: string }>;
+}
+
 export interface Workspace {
   id: string;
   name: string;
   color: WorkspaceColor;
   tabs: SavedTab[];
+  history?: WorkspaceHistoryEntry[];
   live: WorkspaceLiveState;
   createdAt: string;
   updatedAt: string;
