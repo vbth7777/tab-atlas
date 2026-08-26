@@ -62,6 +62,15 @@ export interface Workspace {
   live: WorkspaceLiveState;
   createdAt: string;
   updatedAt: string;
+  parentId?: string | null;
+}
+
+export interface WorkspaceTreeNode {
+  workspace: Workspace;
+  children: Workspace[];
+  totalTabsCount: number;
+  totalChildCount: number;
+  hasLive: boolean;
 }
 
 export interface WorkspaceStore {
@@ -69,6 +78,8 @@ export interface WorkspaceStore {
   workspaces: Workspace[];
   /** Maps a Chrome window id to the workspace that owns it. */
   windowToWorkspace: Record<string, string>;
+  /** Tombstones for deleted workspaces to prevent resurrection during cloud sync: workspaceId -> ISO deletedAt */
+  deletedWorkspaces?: Record<string, string>;
 }
 
 export interface TabSnapshot {
@@ -80,8 +91,14 @@ export interface TabSnapshot {
   status?: string;
 }
 
-export const EMPTY_STORE: WorkspaceStore = { schemaVersion: 2, workspaces: [], windowToWorkspace: {} };
+export const EMPTY_STORE: WorkspaceStore = {
+  schemaVersion: 2,
+  workspaces: [],
+  windowToWorkspace: {},
+  deletedWorkspaces: {},
+};
 
 export function isConnected(workspace: Workspace): boolean {
   return workspace.live.status === 'connected' && workspace.live.windowId !== undefined;
 }
+

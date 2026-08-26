@@ -37,6 +37,8 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
     return {
       schemaVersion: 2,
       windowToWorkspace: value.windowToWorkspace ?? {},
+      deletedWorkspaces:
+        value.deletedWorkspaces && typeof value.deletedWorkspaces === 'object' ? value.deletedWorkspaces : {},
       workspaces: value.workspaces.map((ws) => ({
         ...ws,
         live: ws.live || { status: 'disconnected' },
@@ -52,6 +54,7 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
     return {
       schemaVersion: 2,
       windowToWorkspace: {},
+      deletedWorkspaces: {},
       workspaces: value.workspaces.map((workspace) => ({
         ...workspace,
         live: { status: 'disconnected' },
@@ -72,10 +75,12 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
       return {
         schemaVersion: 2,
         windowToWorkspace: {},
+        deletedWorkspaces: {},
         workspaces: validWorkspaces.map((ws: any) => ({
           id: ws.id,
           name: ws.name,
           color: ws.color || 'indigo',
+          parentId: ws.parentId || null,
           createdAt: ws.createdAt || new Date().toISOString(),
           updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
           tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
@@ -92,10 +97,12 @@ export function migrateWorkspaceStore(value: unknown): WorkspaceStore {
     return {
       schemaVersion: 2,
       windowToWorkspace: (value as any).windowToWorkspace || {},
+      deletedWorkspaces: (value as any).deletedWorkspaces || {},
       workspaces: rawList.map((ws: any) => ({
         id: ws.id || String(Date.now() + Math.random()),
         name: ws.name || 'Untitled Workspace',
         color: ws.color || 'indigo',
+        parentId: ws.parentId || null,
         createdAt: ws.createdAt || new Date().toISOString(),
         updatedAt: ws.updatedAt || ws.createdAt || new Date().toISOString(),
         tabs: Array.isArray(ws.tabs) ? ws.tabs : [],
@@ -152,18 +159,35 @@ export class ChromeLocalWorkspaceRepository implements WorkspaceRepository {
       if (index === -1) workspaces.push(workspace);
       else workspaces[index] = workspace;
 
-      return { store: { ...store, workspaces }, result: undefined };
+      const deletedWorkspaces = { ...(store.deletedWorkspaces || {}) };
+      delete deletedWorkspaces[workspace.id];
+
+      return { store: { ...store, workspaces, deletedWorkspaces }, result: undefined };
     });
   }
 
   async remove(id: string): Promise<void> {
     await this.update((store) => {
+      const now = new Date().toISOString();
+      const childWorkspaces = store.workspaces.filter((w) => w.parentId === id);
+      const idsToDelete = new Set<string>([id, ...childWorkspaces.map((c) => c.id)]);
+
       const windowToWorkspace = Object.fromEntries(
-        Object.entries(store.windowToWorkspace).filter(([, workspaceId]) => workspaceId !== id),
+        Object.entries(store.windowToWorkspace).filter(([, workspaceId]) => !idsToDelete.has(workspaceId)),
       );
 
+      const deletedWorkspaces = { ...(store.deletedWorkspaces || {}) };
+      for (const deletedId of idsToDelete) {
+        deletedWorkspaces[deletedId] = now;
+      }
+
       return {
-        store: { ...store, windowToWorkspace, workspaces: store.workspaces.filter((item) => item.id !== id) },
+        store: {
+          ...store,
+          windowToWorkspace,
+          deletedWorkspaces,
+          workspaces: store.workspaces.filter((item) => !idsToDelete.has(item.id)),
+        },
         result: undefined,
       };
     });

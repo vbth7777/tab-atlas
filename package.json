@@ -2,7 +2,7 @@
   "name": "tab-atlas",
   "description": "Save, organize, and restore browser workspaces.",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -38,4 +38,3 @@
     "wxt": "^0.21.3"
   }
 }
-
