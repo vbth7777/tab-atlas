@@ -1,4 +1,4 @@
-import type { SavedTab, TabSnapshot, Workspace, WorkspaceColor, WorkspaceHistoryEntry, WorkspaceStore } from '@/src/domain/workspace';
+import type { SavedTab, TabSnapshot, Workspace, WorkspaceColor, WorkspaceHistoryEntry, WorkspaceStore, WorkspaceTreeNode } from '@/src/domain/workspace';
 import type { WorkspaceRepository } from '@/src/data/workspace-repository';
 
 function createId(prefix: string): string {
@@ -361,6 +361,39 @@ export async function clearWorkspaceHistory(
   return updatedWorkspace;
 }
 
+export async function deleteWorkspace(
+  repository: WorkspaceRepository,
+  workspaceId: string
+): Promise<{ deletedIds: string[] }> {
+  const store = await repository.read();
+  const target = store.workspaces.find((w) => w.id === workspaceId);
+  if (!target) return { deletedIds: [] };
+
+  const now = new Date().toISOString();
+  // Find target workspace and all its child workspaces
+  const childWorkspaces = store.workspaces.filter((w) => w.parentId === workspaceId);
+  const idsToDelete = new Set<string>([workspaceId, ...childWorkspaces.map((c) => c.id)]);
+
+  const updatedWorkspaces = store.workspaces.filter((w) => !idsToDelete.has(w.id));
+  const updatedWindowMap = Object.fromEntries(
+    Object.entries(store.windowToWorkspace).filter(([, wsId]) => !idsToDelete.has(wsId))
+  );
+
+  const updatedDeletedWorkspaces = { ...(store.deletedWorkspaces || {}) };
+  for (const id of idsToDelete) {
+    updatedDeletedWorkspaces[id] = now;
+  }
+
+  await repository.replace({
+    ...store,
+    windowToWorkspace: updatedWindowMap,
+    deletedWorkspaces: updatedDeletedWorkspaces,
+    workspaces: updatedWorkspaces,
+  });
+
+  return { deletedIds: Array.from(idsToDelete) };
+}
+
 export function mergeWorkspaceStores(
   localStore: WorkspaceStore,
   cloudStore: WorkspaceStore | null | undefined
@@ -369,18 +402,55 @@ export function mergeWorkspaceStores(
     return localStore;
   }
 
+  const nowMs = Date.now();
+  const maxAgeMs = 60 * 24 * 60 * 60 * 1000; // Purge tombstones older than 60 days
+
+  // Merge deletedWorkspaces records from both local and cloud
+  const mergedDeleted: Record<string, string> = {};
+  const allDeletedSources = [localStore.deletedWorkspaces, cloudStore.deletedWorkspaces];
+  for (const src of allDeletedSources) {
+    if (src && typeof src === 'object') {
+      for (const [id, time] of Object.entries(src)) {
+        if (typeof time === 'string') {
+          const deleteMs = new Date(time).getTime();
+          if (nowMs - deleteMs < maxAgeMs) {
+            if (!mergedDeleted[id] || time.localeCompare(mergedDeleted[id]) > 0) {
+              mergedDeleted[id] = time;
+            }
+          }
+        }
+      }
+    }
+  }
+
   const workspaceMap = new Map<string, Workspace>();
 
+  // Helper to check if a workspace is marked as deleted by a tombstone
+  const isDeleted = (ws: Workspace): boolean => {
+    const deletedTime = mergedDeleted[ws.id];
+    if (!deletedTime) return false;
+    const updateTime = ws.updatedAt || ws.createdAt || '';
+    // If deleted timestamp is >= update timestamp, the workspace is deleted
+    return updateTime.localeCompare(deletedTime) <= 0;
+  };
+
   for (const workspace of localStore.workspaces) {
-    workspaceMap.set(workspace.id, workspace);
+    if (!isDeleted(workspace)) {
+      workspaceMap.set(workspace.id, workspace);
+    }
   }
 
   for (const cloudWs of cloudStore.workspaces) {
+    if (isDeleted(cloudWs)) {
+      continue;
+    }
+
     const localWs = workspaceMap.get(cloudWs.id);
     if (!localWs) {
       // New workspace from cloud, set local live status to disconnected
       workspaceMap.set(cloudWs.id, {
         ...cloudWs,
+        parentId: cloudWs.parentId ?? null,
         history: Array.isArray(cloudWs.history) ? cloudWs.history : [],
         live: { status: 'disconnected' },
       });
@@ -390,8 +460,7 @@ export function mergeWorkspaceStores(
       const mergedHistory = mergeWorkspaceHistories(localWs.history, cloudWs.history);
 
       if (cloudTime.localeCompare(localTime) > 0) {
-        // Cloud is strictly newer: use cloud name, color, and tabs
-        // If local is currently connected/live, merge tabs so live unsaved tabs aren't lost before syncing with Chrome window
+        // Cloud is strictly newer: use cloud name, color, parentId, and tabs
         const isLive = localWs.live.status === 'connected';
         const mergedTabs = isLive ? mergeSavedTabs(localWs.tabs, cloudWs.tabs) : cloudWs.tabs;
 
@@ -399,14 +468,16 @@ export function mergeWorkspaceStores(
           ...localWs,
           name: cloudWs.name,
           color: cloudWs.color,
+          parentId: cloudWs.parentId !== undefined ? cloudWs.parentId : (localWs.parentId ?? null),
           tabs: mergedTabs,
           history: mergedHistory,
           updatedAt: cloudTime,
         });
       } else if (localTime.localeCompare(cloudTime) > 0) {
-        // Local is strictly newer: preserve local workspace (including any tab deletions)
+        // Local is strictly newer: preserve local workspace
         workspaceMap.set(cloudWs.id, {
           ...localWs,
+          parentId: localWs.parentId !== undefined ? localWs.parentId : (cloudWs.parentId ?? null),
           history: mergedHistory,
         });
       } else {
@@ -414,11 +485,17 @@ export function mergeWorkspaceStores(
         const mergedTabs = mergeSavedTabs(localWs.tabs, cloudWs.tabs);
         workspaceMap.set(cloudWs.id, {
           ...localWs,
+          parentId: localWs.parentId !== undefined ? localWs.parentId : (cloudWs.parentId ?? null),
           tabs: mergedTabs,
           history: mergedHistory,
         });
       }
     }
+  }
+
+  // If a workspace exists and its updatedAt is newer than its tombstone, keep it and remove tombstone
+  for (const keptId of workspaceMap.keys()) {
+    delete mergedDeleted[keptId];
   }
 
   const mergedWorkspaces = Array.from(workspaceMap.values()).sort((a, b) =>
@@ -429,6 +506,655 @@ export function mergeWorkspaceStores(
     schemaVersion: 2,
     workspaces: mergedWorkspaces,
     windowToWorkspace: localStore.windowToWorkspace || {},
+    deletedWorkspaces: mergedDeleted,
   };
 }
+
+export interface DuplicateTabGroup {
+  url: string;
+  title: string;
+  hostname: string;
+  faviconUrl?: string;
+  count: number;
+  redundantCount: number;
+  tabIds: string[];
+  tabs: SavedTab[];
+}
+
+/**
+ * Finds all groups of tabs that have the same URL (count >= 2).
+ */
+export function getDuplicateTabGroups(tabs: SavedTab[]): DuplicateTabGroup[] {
+  const urlMap = new Map<string, SavedTab[]>();
+
+  for (const tab of tabs) {
+    if (!tab.url) continue;
+    const existing = urlMap.get(tab.url) || [];
+    existing.push(tab);
+    urlMap.set(tab.url, existing);
+  }
+
+  const groups: DuplicateTabGroup[] = [];
+
+  for (const [url, groupTabs] of urlMap.entries()) {
+    if (groupTabs.length >= 2) {
+      const primary = groupTabs[0];
+      if (!primary) continue;
+      const title = groupTabs.find((t) => t.title && t.title !== t.url && t.title !== t.hostname)?.title || primary.title;
+      const faviconUrl = groupTabs.find((t) => t.faviconUrl)?.faviconUrl || primary.faviconUrl;
+
+      groups.push({
+        url,
+        title,
+        hostname: primary.hostname,
+        faviconUrl,
+        count: groupTabs.length,
+        redundantCount: groupTabs.length - 1,
+        tabIds: groupTabs.map((t) => t.id),
+        tabs: groupTabs,
+      });
+    }
+  }
+
+  // Sort groups by redundantCount descending (groups with most duplicates first)
+  return groups.sort((a, b) => b.redundantCount - a.redundantCount);
+}
+
+/**
+ * Deduplicates saved tabs by keeping the first occurrence of each URL.
+ * If targetUrls is provided, only tabs matching those URLs are deduplicated;
+ * other duplicate tabs remain untouched.
+ */
+export function deduplicateSavedTabs(
+  tabs: SavedTab[],
+  targetUrls?: string[] | Set<string>
+): { remainingTabs: SavedTab[]; removedTabs: SavedTab[]; removedCount: number } {
+  const targetSet = targetUrls ? (targetUrls instanceof Set ? targetUrls : new Set(targetUrls)) : null;
+  const seenUrls = new Set<string>();
+  const remainingTabs: SavedTab[] = [];
+  const removedTabs: SavedTab[] = [];
+
+  for (const tab of tabs) {
+    if (!tab.url) {
+      remainingTabs.push(tab);
+      continue;
+    }
+
+    const shouldDeduplicate = !targetSet || targetSet.has(tab.url);
+
+    if (shouldDeduplicate) {
+      if (seenUrls.has(tab.url)) {
+        removedTabs.push(tab);
+      } else {
+        seenUrls.add(tab.url);
+        remainingTabs.push(tab);
+      }
+    } else {
+      remainingTabs.push(tab);
+    }
+  }
+
+  return {
+    remainingTabs,
+    removedTabs,
+    removedCount: removedTabs.length,
+  };
+}
+
+/**
+ * Deduplicates tabs of a saved workspace in repository.
+ */
+export async function deduplicateWorkspace(
+  repository: WorkspaceRepository,
+  workspaceId: string,
+  targetUrls?: string[]
+): Promise<{ workspace: Workspace; removedCount: number; affectedGroups: number }> {
+  const store = await repository.read();
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) throw new Error('Workspace not found.');
+
+  const { remainingTabs, removedCount } = deduplicateSavedTabs(workspace.tabs, targetUrls);
+
+  const affectedGroups = targetUrls ? targetUrls.length : getDuplicateTabGroups(workspace.tabs).length;
+  const updatedWorkspace: Workspace = {
+    ...workspace,
+    tabs: remainingTabs,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await repository.replace(replaceWorkspace(store, updatedWorkspace));
+
+  return {
+    workspace: updatedWorkspace,
+    removedCount,
+    affectedGroups,
+  };
+}
+
+/**
+ * Adds new tabs to an existing workspace.
+ */
+export async function addTabsToWorkspace(
+  repository: WorkspaceRepository,
+  workspaceId: string,
+  tabsToAdd: Array<{ url: string; title?: string; faviconUrl?: string }>
+): Promise<{ workspace: Workspace; addedCount: number }> {
+  const now = new Date().toISOString();
+  const store = await repository.read();
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) throw new Error('Workspace not found.');
+
+  const newSavedTabs: SavedTab[] = [];
+  for (const item of tabsToAdd) {
+    const rawUrl = extractWebUrl(item.url);
+    if (!rawUrl) continue;
+
+    let hostname = rawUrl;
+    try {
+      hostname = new URL(rawUrl).hostname.replace(/^www\./, '');
+    } catch {
+      // Ignore malformed hostname
+    }
+
+    newSavedTabs.push({
+      id: createId('tab'),
+      title: item.title?.trim() || hostname,
+      url: rawUrl,
+      faviconUrl: item.faviconUrl,
+      hostname,
+      savedAt: now,
+    });
+  }
+
+  if (newSavedTabs.length === 0) {
+    return { workspace, addedCount: 0 };
+  }
+
+  const updatedWorkspace: Workspace = {
+    ...workspace,
+    tabs: [...workspace.tabs, ...newSavedTabs],
+    updatedAt: now,
+  };
+
+  await repository.replace(replaceWorkspace(store, updatedWorkspace));
+
+  return {
+    workspace: updatedWorkspace,
+    addedCount: newSavedTabs.length,
+  };
+}
+
+/**
+ * Builds a hierarchical tree node structure for workspaces.
+ */
+export function buildWorkspaceTree(workspaces: Workspace[]): WorkspaceTreeNode[] {
+  const topLevel = workspaces.filter((w) => !w.parentId);
+  const childrenMap = new Map<string, Workspace[]>();
+
+  for (const w of workspaces) {
+    if (w.parentId) {
+      const list = childrenMap.get(w.parentId) || [];
+      list.push(w);
+      childrenMap.set(w.parentId, list);
+    }
+  }
+
+  return topLevel.map((parent) => {
+    const children = (childrenMap.get(parent.id) || []).sort((a, b) =>
+      (a.createdAt || '').localeCompare(b.createdAt || '')
+    );
+    const totalTabsCount = parent.tabs.length + children.reduce((sum, c) => sum + c.tabs.length, 0);
+    const hasLive =
+      (parent.live.status === 'connected' && parent.live.windowId !== undefined) ||
+      children.some((c) => c.live.status === 'connected' && c.live.windowId !== undefined);
+
+    return {
+      workspace: parent,
+      children,
+      totalTabsCount,
+      totalChildCount: children.length,
+      hasLive,
+    };
+  });
+}
+
+export function getAllDescendantWorkspaces(workspaces: Workspace[], rootId: string): Workspace[] {
+  return workspaces.filter((w) => w.parentId === rootId);
+}
+
+export interface TreeTabItem extends SavedTab {
+  workspaceId: string;
+  workspaceName: string;
+  isParent: boolean;
+}
+
+export function getAllTabsInTree(workspaces: Workspace[], rootId: string): TreeTabItem[] {
+  const parent = workspaces.find((w) => w.id === rootId);
+  const children = workspaces.filter((w) => w.parentId === rootId);
+  const result: TreeTabItem[] = [];
+
+  if (parent) {
+    for (const tab of parent.tabs) {
+      result.push({
+        ...tab,
+        workspaceId: parent.id,
+        workspaceName: parent.name,
+        isParent: true,
+      });
+    }
+  }
+
+  for (const child of children) {
+    for (const tab of child.tabs) {
+      result.push({
+        ...tab,
+        workspaceId: child.id,
+        workspaceName: child.name,
+        isParent: false,
+      });
+    }
+  }
+
+  return result;
+}
+
+export interface SplitWorkspaceParams {
+  parentWorkspaceId: string;
+  splitMode: 'by_tab_count' | 'by_child_count';
+  value: number;
+  childNamePrefix?: string;
+  colors?: WorkspaceColor[];
+  moveTabs?: boolean;
+}
+
+export interface SplitWorkspaceResult {
+  parent: Workspace;
+  children: Workspace[];
+}
+
+export async function splitWorkspace(
+  repository: WorkspaceRepository,
+  params: SplitWorkspaceParams
+): Promise<SplitWorkspaceResult> {
+  const now = new Date().toISOString();
+  const store = await repository.read();
+  const parent = store.workspaces.find((w) => w.id === params.parentWorkspaceId);
+  if (!parent) throw new Error('Parent workspace not found.');
+
+  if (parent.parentId) {
+    throw new Error('Chỉ có thể chia đều tab từ Workspace Gốc (Root Workspace). Không thể tách tiếp workspace con.');
+  }
+
+  const totalTabs = parent.tabs.length;
+  if (totalTabs === 0) {
+    throw new Error('Workspace không có tab nào để chia.');
+  }
+
+  let chunkSize = 1;
+  let childCount = 1;
+
+  if (params.splitMode === 'by_tab_count') {
+    chunkSize = Math.max(1, Math.floor(params.value));
+    childCount = Math.ceil(totalTabs / chunkSize);
+  } else {
+    childCount = Math.max(1, Math.min(totalTabs, Math.floor(params.value)));
+    chunkSize = Math.ceil(totalTabs / childCount);
+  }
+
+  const chunks: SavedTab[][] = [];
+  for (let i = 0; i < totalTabs; i += chunkSize) {
+    chunks.push(parent.tabs.slice(i, i + chunkSize));
+  }
+
+  const prefix = params.childNamePrefix?.trim() || `${parent.name} - Phần`;
+  const palette: WorkspaceColor[] = ['indigo', 'sky', 'teal', 'emerald', 'amber', 'orange', 'rose', 'violet'];
+  const newChildren: Workspace[] = [];
+
+  chunks.forEach((chunk, index) => {
+    const colorIndex = ((palette.indexOf(parent.color) + index + 1) % palette.length);
+    const color: WorkspaceColor =
+      (params.colors && params.colors[index % params.colors.length]) ||
+      palette[colorIndex >= 0 ? colorIndex : 0] ||
+      'indigo';
+    const childWs: Workspace = {
+      id: createId('ws_child'),
+      name: `${prefix} ${index + 1}`,
+      color,
+      parentId: parent.id,
+      tabs: chunk,
+      history: [],
+      live: { status: 'disconnected' },
+      createdAt: new Date(Date.now() + index * 50).toISOString(),
+      updatedAt: now,
+    };
+    newChildren.push(childWs);
+  });
+
+  const updatedParent: Workspace = {
+    ...parent,
+    tabs: params.moveTabs === false ? parent.tabs : [],
+    updatedAt: now,
+  };
+
+  const updatedWorkspaces = store.workspaces
+    .map((w) => (w.id === parent.id ? updatedParent : w))
+    .concat(newChildren);
+
+  await repository.replace({
+    ...store,
+    workspaces: updatedWorkspaces,
+  });
+
+  return {
+    parent: updatedParent,
+    children: newChildren,
+  };
+}
+
+export async function mergeChildrenToParent(
+  repository: WorkspaceRepository,
+  parentWorkspaceId: string,
+  deleteChildren = true
+): Promise<{ parent: Workspace; mergedTabsCount: number; affectedChildrenCount: number }> {
+  const now = new Date().toISOString();
+  const store = await repository.read();
+  const parent = store.workspaces.find((w) => w.id === parentWorkspaceId);
+  if (!parent) throw new Error('Parent workspace not found.');
+
+  const children = store.workspaces.filter((w) => w.parentId === parentWorkspaceId);
+  if (children.length === 0) {
+    return { parent, mergedTabsCount: 0, affectedChildrenCount: 0 };
+  }
+
+  const collectedTabs: SavedTab[] = [];
+  for (const child of children) {
+    collectedTabs.push(...child.tabs);
+  }
+
+  const mergedTabs = [...parent.tabs, ...collectedTabs];
+  const updatedParent: Workspace = {
+    ...parent,
+    tabs: mergedTabs,
+    updatedAt: now,
+  };
+
+  let newWorkspaces: Workspace[];
+  const updatedDeletedWorkspaces = { ...(store.deletedWorkspaces || {}) };
+
+  if (deleteChildren) {
+    const childIds = new Set(children.map((c) => c.id));
+    for (const child of children) {
+      updatedDeletedWorkspaces[child.id] = now;
+    }
+    newWorkspaces = store.workspaces
+      .filter((w) => !childIds.has(w.id))
+      .map((w) => (w.id === parent.id ? updatedParent : w));
+  } else {
+    newWorkspaces = store.workspaces.map((w) => {
+      if (w.id === parent.id) return updatedParent;
+      if (w.parentId === parent.id) return { ...w, tabs: [], updatedAt: now };
+      return w;
+    });
+  }
+
+  await repository.replace({
+    ...store,
+    deletedWorkspaces: updatedDeletedWorkspaces,
+    workspaces: newWorkspaces,
+  });
+
+  return {
+    parent: updatedParent,
+    mergedTabsCount: collectedTabs.length,
+    affectedChildrenCount: children.length,
+  };
+}
+
+export async function createChildWorkspace(
+  repository: WorkspaceRepository,
+  parentId: string,
+  name: string,
+  color?: WorkspaceColor,
+  initialTabs?: Array<{ url: string; title?: string; faviconUrl?: string }>,
+  removeTabsFromParent?: boolean
+): Promise<Workspace> {
+  const store = await repository.read();
+  const parent = store.workspaces.find((w) => w.id === parentId);
+  if (!parent) throw new Error('Parent workspace not found.');
+
+  const now = new Date().toISOString();
+
+  // Format initial tabs if any
+  const formattedTabs: SavedTab[] = (initialTabs || [])
+    .map((tabItem): SavedTab | null => {
+      const cleanUrl = extractWebUrl(tabItem.url);
+      if (!cleanUrl) return null;
+      let hostname = cleanUrl;
+      try {
+        hostname = new URL(cleanUrl).hostname.replace(/^www\./, '');
+      } catch {}
+      return {
+        id: createId('tab'),
+        url: cleanUrl,
+        title: tabItem.title?.trim() || hostname,
+        hostname,
+        faviconUrl: tabItem.faviconUrl,
+        savedAt: now,
+      };
+    })
+    .filter((tabItem): tabItem is SavedTab => tabItem !== null);
+
+  const childWs: Workspace = {
+    id: createId('ws_child'),
+    name: name.trim() || `${parent.name} - Con`,
+    color: color || parent.color,
+    parentId: parent.id,
+    tabs: formattedTabs,
+    history: [],
+    live: { status: 'disconnected' },
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  let updatedParent = parent;
+  if (removeTabsFromParent && formattedTabs.length > 0) {
+    const urlsToRemove = new Set(formattedTabs.map((tabItem) => tabItem.url));
+    updatedParent = {
+      ...parent,
+      tabs: parent.tabs.filter((tabItem) => !urlsToRemove.has(tabItem.url)),
+      updatedAt: now,
+    };
+  }
+
+  const updatedWorkspaces = store.workspaces
+    .map((w) => (w.id === parent.id ? updatedParent : w))
+    .concat(childWs);
+
+  await repository.replace({
+    ...store,
+    workspaces: updatedWorkspaces,
+  });
+
+  return childWs;
+}
+
+export async function moveTabsBetweenWorkspaces(
+  repository: WorkspaceRepository,
+  sourceWorkspaceId: string,
+  targetWorkspaceId: string,
+  tabIds: string[]
+): Promise<{ source: Workspace; target: Workspace; movedCount: number }> {
+  const store = await repository.read();
+  const source = store.workspaces.find((w) => w.id === sourceWorkspaceId);
+  const target = store.workspaces.find((w) => w.id === targetWorkspaceId);
+
+  if (!source) throw new Error('Source workspace not found.');
+  if (!target) throw new Error('Target workspace not found.');
+
+  if (sourceWorkspaceId === targetWorkspaceId) {
+    return { source, target, movedCount: 0 };
+  }
+
+  const now = new Date().toISOString();
+  const tabIdSet = new Set(tabIds);
+  const tabsToMove = source.tabs.filter((t) => tabIdSet.has(t.id));
+  const remainingSourceTabs = source.tabs.filter((t) => !tabIdSet.has(t.id));
+
+  if (tabsToMove.length === 0) {
+    return { source, target, movedCount: 0 };
+  }
+
+  const updatedSource: Workspace = {
+    ...source,
+    tabs: remainingSourceTabs,
+    updatedAt: now,
+  };
+
+  const updatedTarget: Workspace = {
+    ...target,
+    tabs: [...target.tabs, ...tabsToMove],
+    updatedAt: now,
+  };
+
+  const newWorkspaces = store.workspaces.map((w) => {
+    if (w.id === source.id) return updatedSource;
+    if (w.id === target.id) return updatedTarget;
+    return w;
+  });
+
+  await repository.replace({
+    ...store,
+    workspaces: newWorkspaces,
+  });
+
+  return {
+    source: updatedSource,
+    target: updatedTarget,
+    movedCount: tabsToMove.length,
+  };
+}
+
+export interface TreeDuplicateGroup {
+  url: string;
+  title: string;
+  hostname: string;
+  faviconUrl?: string;
+  totalCount: number;
+  redundantCount: number;
+  occurrences: Array<{
+    tabId: string;
+    workspaceId: string;
+    workspaceName: string;
+    isParent: boolean;
+  }>;
+}
+
+export function getTreeDuplicateTabGroups(workspaces: Workspace[], rootId: string): TreeDuplicateGroup[] {
+  const allTabs = getAllTabsInTree(workspaces, rootId);
+  const urlGroups = new Map<string, TreeTabItem[]>();
+
+  for (const tab of allTabs) {
+    if (!tab.url) continue;
+    const list = urlGroups.get(tab.url) || [];
+    list.push(tab);
+    urlGroups.set(tab.url, list);
+  }
+
+  const duplicateGroups: TreeDuplicateGroup[] = [];
+
+  for (const [url, tabList] of urlGroups.entries()) {
+    if (tabList.length > 1 && tabList[0]) {
+      const first = tabList[0];
+      duplicateGroups.push({
+        url,
+        title: first.title || first.hostname || url,
+        hostname: first.hostname,
+        faviconUrl: first.faviconUrl,
+        totalCount: tabList.length,
+        redundantCount: tabList.length - 1,
+        occurrences: tabList.map((t) => ({
+          tabId: t.id,
+          workspaceId: t.workspaceId,
+          workspaceName: t.workspaceName,
+          isParent: t.isParent,
+        })),
+      });
+    }
+  }
+
+  return duplicateGroups.sort((a, b) => b.totalCount - a.totalCount || a.title.localeCompare(b.title));
+}
+
+export async function deduplicateWorkspaceTree(
+  repository: WorkspaceRepository,
+  rootId: string,
+  targetUrls?: string[]
+): Promise<{
+  affectedWorkspacesCount: number;
+  totalRemovedCount: number;
+}> {
+  const store = await repository.read();
+  const parent = store.workspaces.find((w) => w.id === rootId);
+  if (!parent) throw new Error('Root workspace not found.');
+
+  const children = store.workspaces.filter((w) => w.parentId === rootId);
+  const allTreeWorkspaces = [parent, ...children];
+  const targetSet = targetUrls && targetUrls.length > 0 ? new Set(targetUrls) : null;
+
+  const seenUrls = new Set<string>();
+  let totalRemovedCount = 0;
+  let affectedWorkspacesCount = 0;
+
+  const now = new Date().toISOString();
+  const updatedWorkspacesMap = new Map<string, Workspace>();
+
+  for (const ws of allTreeWorkspaces) {
+    const remainingTabs: SavedTab[] = [];
+    let removedInThisWs = 0;
+
+    for (const tab of ws.tabs) {
+      if (!tab.url) {
+        remainingTabs.push(tab);
+        continue;
+      }
+
+      const shouldDeduplicate = !targetSet || targetSet.has(tab.url);
+
+      if (shouldDeduplicate) {
+        if (seenUrls.has(tab.url)) {
+          removedInThisWs++;
+          totalRemovedCount++;
+        } else {
+          seenUrls.add(tab.url);
+          remainingTabs.push(tab);
+        }
+      } else {
+        remainingTabs.push(tab);
+      }
+    }
+
+    if (removedInThisWs > 0) {
+      affectedWorkspacesCount++;
+      updatedWorkspacesMap.set(ws.id, {
+        ...ws,
+        tabs: remainingTabs,
+        updatedAt: now,
+      });
+    }
+  }
+
+  if (totalRemovedCount > 0) {
+    const newWorkspaces = store.workspaces.map((w) => updatedWorkspacesMap.get(w.id) || w);
+    await repository.replace({
+      ...store,
+      workspaces: newWorkspaces,
+    });
+  }
+
+  return {
+    affectedWorkspacesCount,
+    totalRemovedCount,
+  };
+}
+
 

@@ -3,6 +3,7 @@ import {
   bindWindowToWorkspace,
   clearWorkspaceHistory,
   createLiveWorkspace,
+  deleteWorkspace,
   disconnectWindow,
   filterWorkspaces,
   mergeSavedTabs,
@@ -12,8 +13,19 @@ import {
   syncWorkspaceFromWindow,
   trimWorkspaceHistory,
   updateWorkspaceMetadata,
+  getDuplicateTabGroups,
+  deduplicateSavedTabs,
+  deduplicateWorkspace,
+  addTabsToWorkspace,
+  buildWorkspaceTree,
+  splitWorkspace,
+  mergeChildrenToParent,
+  createChildWorkspace,
+  moveTabsBetweenWorkspaces,
+  getTreeDuplicateTabGroups,
+  deduplicateWorkspaceTree,
 } from '@/src/domain/workspace-service';
-import { EMPTY_STORE, type Workspace, type WorkspaceStore } from '@/src/domain/workspace';
+import { EMPTY_STORE, type SavedTab, type Workspace, type WorkspaceStore } from '@/src/domain/workspace';
 import type { WorkspaceRepository } from '@/src/data/workspace-repository';
 
 class MemoryRepository implements WorkspaceRepository {
@@ -312,6 +324,137 @@ describe('mergeWorkspaceStores', () => {
     // Should contain 3 Google tabs
     expect(merged).toHaveLength(3);
   });
+
+  it('prevents deleted workspaces from being resurrected by older cloudStore via tombstones', () => {
+    const wsActive: Workspace = {
+      id: 'ws_active',
+      name: 'Active Project',
+      color: 'teal',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-01T10:00:00Z',
+      updatedAt: '2026-08-01T10:00:00Z',
+    };
+
+    const wsDeletedOnLocal: Workspace = {
+      id: 'ws_deleted',
+      name: 'Old Project (Deleted Locally)',
+      color: 'rose',
+      tabs: [{ id: 't1', title: 'Old Tab', url: 'https://old.com', hostname: 'old.com', savedAt: '2026-08-01T10:00:00Z' }],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-01T10:00:00Z',
+      updatedAt: '2026-08-01T11:00:00Z', // Updated before deletion
+    };
+
+    // Local store recorded deletion tombstone at 12:00:00
+    const localStore: WorkspaceStore = {
+      schemaVersion: 2,
+      workspaces: [wsActive],
+      windowToWorkspace: {},
+      deletedWorkspaces: {
+        ws_deleted: '2026-08-01T12:00:00Z',
+      },
+    };
+
+    // Cloud store still has ws_deleted from earlier sync
+    const cloudStore: WorkspaceStore = {
+      schemaVersion: 2,
+      workspaces: [wsActive, wsDeletedOnLocal],
+      windowToWorkspace: {},
+      deletedWorkspaces: {},
+    };
+
+    const merged = mergeWorkspaceStores(localStore, cloudStore);
+    // ws_deleted must NOT be resurrected!
+    expect(merged.workspaces).toHaveLength(1);
+    expect(merged.workspaces[0]!.id).toBe('ws_active');
+    expect(merged.deletedWorkspaces?.ws_deleted).toBe('2026-08-01T12:00:00Z');
+  });
+
+  it('propagates deletedWorkspaces from cloudStore to localStore and deletes local workspace', () => {
+    const wsToRemotelyDelete: Workspace = {
+      id: 'ws_remote_del',
+      name: 'Deleted on Another Device',
+      color: 'amber',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-01T10:00:00Z',
+      updatedAt: '2026-08-01T10:00:00Z',
+    };
+
+    const localStore: WorkspaceStore = {
+      schemaVersion: 2,
+      workspaces: [wsToRemotelyDelete],
+      windowToWorkspace: {},
+      deletedWorkspaces: {},
+    };
+
+    const cloudStore: WorkspaceStore = {
+      schemaVersion: 2,
+      workspaces: [],
+      windowToWorkspace: {},
+      deletedWorkspaces: {
+        ws_remote_del: '2026-08-01T15:00:00Z',
+      },
+    };
+
+    const merged = mergeWorkspaceStores(localStore, cloudStore);
+    // Must be deleted on local device as well
+    expect(merged.workspaces).toHaveLength(0);
+    expect(merged.deletedWorkspaces?.ws_remote_del).toBe('2026-08-01T15:00:00Z');
+  });
+
+  it('correctly preserves parentId during cloud and local merges', () => {
+    const parentWs: Workspace = {
+      id: 'ws_parent',
+      name: 'Parent Workspace',
+      color: 'indigo',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-01T10:00:00Z',
+      updatedAt: '2026-08-01T10:00:00Z',
+      parentId: null,
+    };
+
+    const childWsLocal: Workspace = {
+      id: 'ws_child',
+      name: 'Child Workspace (Local)',
+      color: 'teal',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-01T10:00:00Z',
+      updatedAt: '2026-08-01T10:00:00Z',
+      parentId: 'ws_parent',
+    };
+
+    const childWsCloudNewer: Workspace = {
+      id: 'ws_child',
+      name: 'Child Workspace (Cloud Newer)',
+      color: 'teal',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-01T10:00:00Z',
+      updatedAt: '2026-08-02T10:00:00Z',
+      parentId: 'ws_parent',
+    };
+
+    const localStore: WorkspaceStore = {
+      schemaVersion: 2,
+      workspaces: [parentWs, childWsLocal],
+      windowToWorkspace: {},
+    };
+
+    const cloudStore: WorkspaceStore = {
+      schemaVersion: 2,
+      workspaces: [parentWs, childWsCloudNewer],
+      windowToWorkspace: {},
+    };
+
+    const merged = mergeWorkspaceStores(localStore, cloudStore);
+    const mergedChild = merged.workspaces.find((w) => w.id === 'ws_child');
+    expect(mergedChild?.name).toBe('Child Workspace (Cloud Newer)');
+    expect(mergedChild?.parentId).toBe('ws_parent');
+  });
 });
 
 describe('workspace tab history', () => {
@@ -384,4 +527,519 @@ describe('workspace tab history', () => {
     expect((await repository.get(ws.id))?.history).toEqual([]);
   });
 });
+
+describe('duplicate tab detection and deduplication', () => {
+  const createTestTabs = (): SavedTab[] => [
+    { id: 't1', title: 'YouTube - Video 1', url: 'https://youtube.com/watch?v=1', hostname: 'youtube.com', savedAt: '2026-08-22T00:00:00Z' },
+    { id: 't2', title: 'GitHub - PR', url: 'https://github.com/repo/pull/1', hostname: 'github.com', savedAt: '2026-08-22T00:01:00Z' },
+    { id: 't3', title: 'YouTube - Video 1 Duplicate', url: 'https://youtube.com/watch?v=1', hostname: 'youtube.com', savedAt: '2026-08-22T00:02:00Z' },
+    { id: 't4', title: 'Google Search', url: 'https://google.com', hostname: 'google.com', savedAt: '2026-08-22T00:03:00Z' },
+    { id: 't5', title: 'YouTube - Video 1 Third', url: 'https://youtube.com/watch?v=1', hostname: 'youtube.com', savedAt: '2026-08-22T00:04:00Z' },
+    { id: 't6', title: 'GitHub - PR Duplicate', url: 'https://github.com/repo/pull/1', hostname: 'github.com', savedAt: '2026-08-22T00:05:00Z' },
+  ];
+
+  it('detects duplicate groups and computes correct counts', () => {
+    const tabs = createTestTabs();
+    const groups = getDuplicateTabGroups(tabs);
+
+    expect(groups).toHaveLength(2);
+    // YouTube has 3 tabs (2 redundant), sorted first
+    expect(groups[0]?.url).toBe('https://youtube.com/watch?v=1');
+    expect(groups[0]?.count).toBe(3);
+    expect(groups[0]?.redundantCount).toBe(2);
+    expect(groups[0]?.tabIds).toEqual(['t1', 't3', 't5']);
+
+    // GitHub has 2 tabs (1 redundant)
+    expect(groups[1]?.url).toBe('https://github.com/repo/pull/1');
+    expect(groups[1]?.count).toBe(2);
+    expect(groups[1]?.redundantCount).toBe(1);
+    expect(groups[1]?.tabIds).toEqual(['t2', 't6']);
+  });
+
+  it('returns empty array when there are no duplicate tabs', () => {
+    const tabs: SavedTab[] = [
+      { id: 't1', title: 'A', url: 'https://a.com', hostname: 'a.com', savedAt: '2026-08-22T00:00:00Z' },
+      { id: 't2', title: 'B', url: 'https://b.com', hostname: 'b.com', savedAt: '2026-08-22T00:00:00Z' },
+    ];
+    expect(getDuplicateTabGroups(tabs)).toEqual([]);
+  });
+
+  it('deduplicates all duplicate tabs keeping first occurrence', () => {
+    const tabs = createTestTabs();
+    const { remainingTabs, removedTabs, removedCount } = deduplicateSavedTabs(tabs);
+
+    expect(removedCount).toBe(3);
+    expect(removedTabs.map((t) => t.id)).toEqual(['t3', 't5', 't6']);
+    expect(remainingTabs.map((t) => t.id)).toEqual(['t1', 't2', 't4']);
+    expect(remainingTabs.map((t) => t.url)).toEqual([
+      'https://youtube.com/watch?v=1',
+      'https://github.com/repo/pull/1',
+      'https://google.com',
+    ]);
+  });
+
+  it('deduplicates only specified targetUrls', () => {
+    const tabs = createTestTabs();
+    // Only deduplicate YouTube, leave GitHub duplicates intact
+    const { remainingTabs, removedTabs, removedCount } = deduplicateSavedTabs(tabs, ['https://youtube.com/watch?v=1']);
+
+    expect(removedCount).toBe(2);
+    expect(removedTabs.map((t) => t.id)).toEqual(['t3', 't5']);
+    expect(remainingTabs.map((t) => t.id)).toEqual(['t1', 't2', 't4', 't6']);
+  });
+
+  it('deduplicates workspace in repository', async () => {
+    const repository = new MemoryRepository();
+    const workspace: Workspace = {
+      id: 'ws_dup',
+      name: 'Dup Workspace',
+      color: 'indigo',
+      tabs: createTestTabs(),
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    await repository.save(workspace);
+
+    const result = await deduplicateWorkspace(repository, 'ws_dup', ['https://github.com/repo/pull/1']);
+    expect(result.removedCount).toBe(1);
+    expect(result.workspace.tabs).toHaveLength(5);
+
+    const saved = await repository.get('ws_dup');
+    expect(saved?.tabs).toHaveLength(5);
+    expect(saved?.tabs.filter((t) => t.url === 'https://github.com/repo/pull/1')).toHaveLength(1);
+    // YouTube still has 3 tabs because it wasn't in targetUrls
+    expect(saved?.tabs.filter((t) => t.url === 'https://youtube.com/watch?v=1')).toHaveLength(3);
+  });
+});
+
+describe('adding tabs to workspace', () => {
+  it('adds valid web tabs to an existing workspace', async () => {
+    const repository = new MemoryRepository();
+    const ws: Workspace = {
+      id: 'ws_target',
+      name: 'Project Target',
+      color: 'teal',
+      tabs: [{ id: 't1', title: 'Home', url: 'https://home.com', hostname: 'home.com', savedAt: '2026-08-22T00:00:00Z' }],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    await repository.save(ws);
+
+    const res = await addTabsToWorkspace(repository, 'ws_target', [
+      { url: 'https://news.ycombinator.com', title: 'Hacker News' },
+      { url: 'chrome://extensions', title: 'Extensions' }, // Non-web tab, should be ignored
+      { url: 'https://github.com/trending', title: 'Trending' },
+    ]);
+
+    expect(res.addedCount).toBe(2);
+    expect(res.workspace.tabs).toHaveLength(3);
+    expect(res.workspace.tabs.map((t) => t.url)).toEqual([
+      'https://home.com',
+      'https://news.ycombinator.com',
+      'https://github.com/trending',
+    ]);
+
+    const saved = await repository.get('ws_target');
+    expect(saved?.tabs).toHaveLength(3);
+  });
+
+  it('throws error if workspace does not exist', async () => {
+    const repository = new MemoryRepository();
+    await expect(
+      addTabsToWorkspace(repository, 'non_existent', [{ url: 'https://example.com' }])
+    ).rejects.toThrow('Workspace not found.');
+  });
+});
+
+describe('workspace tree hierarchy and splitting', () => {
+  it('builds a tree structure with parent and children', () => {
+    const workspaces: Workspace[] = [
+      {
+        id: 'ws_parent1',
+        name: 'Parent 1',
+        color: 'indigo',
+        tabs: [
+          { id: 't1', title: 'P1', url: 'https://p1.com', hostname: 'p1.com', savedAt: '2026-08-22' },
+        ],
+        live: { status: 'disconnected' },
+        createdAt: '2026-08-22T01:00:00Z',
+        updatedAt: '2026-08-22T01:00:00Z',
+      },
+      {
+        id: 'ws_child1',
+        parentId: 'ws_parent1',
+        name: 'Child 1',
+        color: 'sky',
+        tabs: [
+          { id: 't2', title: 'C1', url: 'https://c1.com', hostname: 'c1.com', savedAt: '2026-08-22' },
+          { id: 't3', title: 'C2', url: 'https://c2.com', hostname: 'c2.com', savedAt: '2026-08-22' },
+        ],
+        live: { status: 'disconnected' },
+        createdAt: '2026-08-22T02:00:00Z',
+        updatedAt: '2026-08-22T02:00:00Z',
+      },
+      {
+        id: 'ws_parent2',
+        name: 'Parent 2',
+        color: 'teal',
+        tabs: [],
+        live: { status: 'disconnected' },
+        createdAt: '2026-08-22T03:00:00Z',
+        updatedAt: '2026-08-22T03:00:00Z',
+      },
+    ];
+
+    const tree = buildWorkspaceTree(workspaces);
+    expect(tree).toHaveLength(2);
+    expect(tree[0]!.workspace.id).toBe('ws_parent1');
+    expect(tree[0]!.children).toHaveLength(1);
+    expect(tree[0]!.children[0]!.id).toBe('ws_child1');
+    expect(tree[0]!.totalTabsCount).toBe(3);
+    expect(tree[1]!.workspace.id).toBe('ws_parent2');
+    expect(tree[1]!.totalTabsCount).toBe(0);
+  });
+
+  it('splits a workspace by tab count', async () => {
+    const repository = new MemoryRepository();
+    const testTabs: SavedTab[] = Array.from({ length: 55 }, (_, i) => ({
+      id: `t_${i}`,
+      title: `Tab ${i}`,
+      url: `https://example.com/tab/${i}`,
+      hostname: 'example.com',
+      savedAt: '2026-08-22',
+    }));
+
+    const parent: Workspace = {
+      id: 'ws_big',
+      name: 'Big Workspace',
+      color: 'rose',
+      tabs: testTabs,
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    await repository.save(parent);
+
+    const result = await splitWorkspace(repository, {
+      parentWorkspaceId: 'ws_big',
+      splitMode: 'by_tab_count',
+      value: 20,
+      childNamePrefix: 'Big Part',
+    });
+
+    expect(result.children).toHaveLength(3); // 20 + 20 + 15
+    expect(result.children[0]!.tabs).toHaveLength(20);
+    expect(result.children[1]!.tabs).toHaveLength(20);
+    expect(result.children[2]!.tabs).toHaveLength(15);
+    expect(result.children[0]!.name).toBe('Big Part 1');
+    expect(result.children[0]!.parentId).toBe('ws_big');
+    expect(result.parent.tabs).toHaveLength(0); // Moved tabs to children
+
+    const all = await repository.list();
+    expect(all).toHaveLength(4); // 1 parent + 3 children
+  });
+
+  it('splits a workspace by number of children', async () => {
+    const repository = new MemoryRepository();
+    const testTabs: SavedTab[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `t_${i}`,
+      title: `Tab ${i}`,
+      url: `https://example.com/tab/${i}`,
+      hostname: 'example.com',
+      savedAt: '2026-08-22',
+    }));
+
+    const parent: Workspace = {
+      id: 'ws_split_child_count',
+      name: 'Split By Count',
+      color: 'teal',
+      tabs: testTabs,
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    await repository.save(parent);
+
+    const result = await splitWorkspace(repository, {
+      parentWorkspaceId: 'ws_split_child_count',
+      splitMode: 'by_child_count',
+      value: 3,
+    });
+
+    expect(result.children).toHaveLength(3);
+    const sum = result.children.reduce((acc, c) => acc + c.tabs.length, 0);
+    expect(sum).toBe(10);
+  });
+
+  it('merges children back to parent workspace', async () => {
+    const repository = new MemoryRepository();
+    const parent: Workspace = {
+      id: 'ws_merge_p',
+      name: 'Parent Merge',
+      color: 'indigo',
+      tabs: [{ id: 'p1', title: 'P1', url: 'https://p.com', hostname: 'p.com', savedAt: '2026-08-22' }],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    const child1: Workspace = {
+      id: 'ws_merge_c1',
+      parentId: 'ws_merge_p',
+      name: 'Child 1',
+      color: 'sky',
+      tabs: [{ id: 'c1', title: 'C1', url: 'https://c1.com', hostname: 'c1.com', savedAt: '2026-08-22' }],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    const child2: Workspace = {
+      id: 'ws_merge_c2',
+      parentId: 'ws_merge_p',
+      name: 'Child 2',
+      color: 'teal',
+      tabs: [{ id: 'c2', title: 'C2', url: 'https://c2.com', hostname: 'c2.com', savedAt: '2026-08-22' }],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+
+    await repository.save(parent);
+    await repository.save(child1);
+    await repository.save(child2);
+
+    const res = await mergeChildrenToParent(repository, 'ws_merge_p', true);
+    expect(res.mergedTabsCount).toBe(2);
+    expect(res.parent.tabs).toHaveLength(3);
+
+    const remaining = await repository.list();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.id).toBe('ws_merge_p');
+    expect(remaining[0]!.tabs).toHaveLength(3);
+  });
+
+  it('moves tabs between workspaces (drag & drop / multi-select)', async () => {
+    const repository = new MemoryRepository();
+    const ws1: Workspace = {
+      id: 'ws_source',
+      name: 'Source WS',
+      color: 'indigo',
+      tabs: [
+        { id: 't1', title: 'Tab 1', url: 'https://1.com', hostname: '1.com', savedAt: '2026-08-22' },
+        { id: 't2', title: 'Tab 2', url: 'https://2.com', hostname: '2.com', savedAt: '2026-08-22' },
+        { id: 't3', title: 'Tab 3', url: 'https://3.com', hostname: '3.com', savedAt: '2026-08-22' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+
+    const ws2: Workspace = {
+      id: 'ws_target',
+      name: 'Target WS (Child of other parent)',
+      parentId: 'ws_other_parent',
+      color: 'emerald',
+      tabs: [
+        { id: 't4', title: 'Tab 4', url: 'https://4.com', hostname: '4.com', savedAt: '2026-08-22' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+
+    await repository.save(ws1);
+    await repository.save(ws2);
+
+    const result = await moveTabsBetweenWorkspaces(repository, 'ws_source', 'ws_target', ['t1', 't3']);
+    expect(result.movedCount).toBe(2);
+    expect(result.source.tabs.map((t) => t.id)).toEqual(['t2']);
+    expect(result.target.tabs.map((t) => t.id)).toEqual(['t4', 't1', 't3']);
+
+    const savedSource = await repository.get('ws_source');
+    const savedTarget = await repository.get('ws_target');
+    expect(savedSource?.tabs).toHaveLength(1);
+    expect(savedTarget?.tabs).toHaveLength(3);
+  });
+
+  it('scans and deduplicates across tree hierarchy', async () => {
+    const repository = new MemoryRepository();
+    const parent: Workspace = {
+      id: 'ws_tree_root',
+      name: 'Tree Root',
+      color: 'indigo',
+      tabs: [
+        { id: 't1', title: 'GitHub', url: 'https://github.com/a', hostname: 'github.com', savedAt: '2026-08-22' },
+        { id: 't2', title: 'Google', url: 'https://google.com', hostname: 'google.com', savedAt: '2026-08-22' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    const child1: Workspace = {
+      id: 'ws_tree_c1',
+      parentId: 'ws_tree_root',
+      name: 'Tree Child 1',
+      color: 'sky',
+      tabs: [
+        { id: 't3', title: 'GitHub Dup in Child 1', url: 'https://github.com/a', hostname: 'github.com', savedAt: '2026-08-22' },
+        { id: 't4', title: 'Yahoo', url: 'https://yahoo.com', hostname: 'yahoo.com', savedAt: '2026-08-22' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+    const child2: Workspace = {
+      id: 'ws_tree_c2',
+      parentId: 'ws_tree_root',
+      name: 'Tree Child 2',
+      color: 'teal',
+      tabs: [
+        { id: 't5', title: 'GitHub Dup in Child 2', url: 'https://github.com/a', hostname: 'github.com', savedAt: '2026-08-22' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-22T00:00:00Z',
+      updatedAt: '2026-08-22T00:00:00Z',
+    };
+
+    await repository.save(parent);
+    await repository.save(child1);
+    await repository.save(child2);
+
+    const treeWorkspaces = [parent, child1, child2];
+    const dupGroups = getTreeDuplicateTabGroups(treeWorkspaces, 'ws_tree_root');
+    expect(dupGroups).toHaveLength(1);
+    expect(dupGroups[0]!.url).toBe('https://github.com/a');
+    expect(dupGroups[0]!.totalCount).toBe(3);
+    expect(dupGroups[0]!.redundantCount).toBe(2);
+    expect(dupGroups[0]!.occurrences).toHaveLength(3);
+
+    const dedupResult = await deduplicateWorkspaceTree(repository, 'ws_tree_root', ['https://github.com/a']);
+    expect(dedupResult.totalRemovedCount).toBe(2);
+
+    const afterParent = await repository.get('ws_tree_root');
+    const afterC1 = await repository.get('ws_tree_c1');
+    const afterC2 = await repository.get('ws_tree_c2');
+
+    expect(afterParent?.tabs).toHaveLength(2); // Kept the first occurrence
+    expect(afterC1?.tabs).toHaveLength(1); // Removed github.com/a, kept yahoo.com
+    expect(afterC2?.tabs).toHaveLength(0); // Removed github.com/a
+  });
+
+  it('creates custom child workspace with empty or initial tabs', async () => {
+    const repository = new MemoryRepository();
+    const parent: Workspace = {
+      id: 'ws_custom_parent',
+      name: 'Main Project',
+      color: 'indigo',
+      tabs: [
+        { id: 't1', title: 'React Docs', url: 'https://react.dev', hostname: 'react.dev', savedAt: '2026-08-26' },
+        { id: 't2', title: 'Vite Guide', url: 'https://vite.dev', hostname: 'vite.dev', savedAt: '2026-08-26' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-26T00:00:00Z',
+      updatedAt: '2026-08-26T00:00:00Z',
+    };
+    await repository.save(parent);
+
+    // 1. Create empty child workspace
+    const emptyChild = await createChildWorkspace(repository, 'ws_custom_parent', 'Empty Notes', 'sky');
+    expect(emptyChild.name).toBe('Empty Notes');
+    expect(emptyChild.color).toBe('sky');
+    expect(emptyChild.parentId).toBe('ws_custom_parent');
+    expect(emptyChild.tabs).toHaveLength(0);
+
+    // 2. Create child workspace with initial tabs and remove from parent
+    const childWithTabs = await createChildWorkspace(
+      repository,
+      'ws_custom_parent',
+      'Docs Sub-Group',
+      'teal',
+      [{ url: 'https://react.dev', title: 'React Docs' }],
+      true
+    );
+    expect(childWithTabs.tabs).toHaveLength(1);
+    expect(childWithTabs.tabs[0]!.url).toBe('https://react.dev');
+
+    const updatedParent = await repository.get('ws_custom_parent');
+    expect(updatedParent?.tabs).toHaveLength(1);
+    expect(updatedParent?.tabs[0]!.url).toBe('https://vite.dev');
+  });
+
+  it('deletes workspace and cascades to child workspaces with tombstones', async () => {
+    const repository = new MemoryRepository();
+    const parent: Workspace = {
+      id: 'ws_cascade_parent',
+      name: 'To Delete Parent',
+      color: 'indigo',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-26T00:00:00Z',
+      updatedAt: '2026-08-26T00:00:00Z',
+    };
+    const child: Workspace = {
+      id: 'ws_cascade_child',
+      name: 'To Delete Child',
+      color: 'sky',
+      parentId: 'ws_cascade_parent',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-26T00:00:00Z',
+      updatedAt: '2026-08-26T00:00:00Z',
+    };
+
+    await repository.save(parent);
+    await repository.save(child);
+
+    const { deletedIds } = await deleteWorkspace(repository, 'ws_cascade_parent');
+    expect(deletedIds).toContain('ws_cascade_parent');
+    expect(deletedIds).toContain('ws_cascade_child');
+
+    const remaining = await repository.list();
+    expect(remaining).toHaveLength(0);
+
+    const store = await repository.read();
+    expect(store.deletedWorkspaces?.ws_cascade_parent).toBeDefined();
+    expect(store.deletedWorkspaces?.ws_cascade_child).toBeDefined();
+  });
+
+  it('rejects splitting a child workspace', async () => {
+    const repository = new MemoryRepository();
+    const root: Workspace = {
+      id: 'ws_root',
+      name: 'Root WS',
+      color: 'indigo',
+      tabs: [],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-26T00:00:00Z',
+      updatedAt: '2026-08-26T00:00:00Z',
+    };
+    const child: Workspace = {
+      id: 'ws_child',
+      name: 'Child WS',
+      color: 'sky',
+      parentId: 'ws_root',
+      tabs: [
+        { id: 't1', title: 'Tab 1', url: 'https://example.com/1', hostname: 'example.com', savedAt: '2026-08-26T00:00:00Z' },
+        { id: 't2', title: 'Tab 2', url: 'https://example.com/2', hostname: 'example.com', savedAt: '2026-08-26T00:00:00Z' },
+      ],
+      live: { status: 'disconnected' },
+      createdAt: '2026-08-26T00:00:00Z',
+      updatedAt: '2026-08-26T00:00:00Z',
+    };
+
+    await repository.save(root);
+    await repository.save(child);
+
+    await expect(
+      splitWorkspace(repository, {
+        parentWorkspaceId: 'ws_child',
+        splitMode: 'by_child_count',
+        value: 2,
+      })
+    ).rejects.toThrow('Chỉ có thể chia đều tab từ Workspace Gốc');
+  });
+});
+
+
 

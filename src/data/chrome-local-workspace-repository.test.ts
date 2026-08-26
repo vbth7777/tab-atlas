@@ -28,6 +28,7 @@ describe('workspace store migration', () => {
       schemaVersion: 2 as const,
       workspaces: [],
       windowToWorkspace: { '3': 'workspace_1' },
+      deletedWorkspaces: {},
     };
 
     expect(migrateWorkspaceStore(store)).toEqual(store);
@@ -69,6 +70,11 @@ describe('workspace store migration', () => {
   });
 
   it('falls back to an empty store for unrecognised data', () => {
-    expect(migrateWorkspaceStore({ schemaVersion: 0, sessions: [] })).toEqual({ schemaVersion: 2, workspaces: [], windowToWorkspace: {} });
+    expect(migrateWorkspaceStore({ schemaVersion: 0, sessions: [] })).toEqual({
+      schemaVersion: 2,
+      workspaces: [],
+      windowToWorkspace: {},
+      deletedWorkspaces: {},
+    });
   });
 });
