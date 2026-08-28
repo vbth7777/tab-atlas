@@ -523,6 +523,7 @@ export default function Dashboard() {
             <Icon name="layout" />
           </span>
           <span>{t.common.appName}</span>
+          <span className="version-tag">v{browser.runtime.getManifest().version}</span>
         </div>
         <button
           className="new-capture"

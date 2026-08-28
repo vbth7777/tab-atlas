@@ -4,6 +4,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'Tab Atlas',
+    version: '0.1.6',
     description: 'Save, organize, and restore browser workspaces.',
     permissions: ['tabs', 'storage'],
     incognito: 'spanning',
