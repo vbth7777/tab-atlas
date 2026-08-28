@@ -2,7 +2,7 @@ import type { TranslationSchema } from './types';
 
 export const en: TranslationSchema = {
   common: {
-    appName: 'Atlas Tab Online',
+    appName: 'Tab Atlas',
     workspaces: 'Workspaces',
     workspace: 'Workspace',
     directTabs: 'direct tabs',

@@ -256,6 +256,7 @@ export default function App() {
             <Icon name="layout" size={16} />
           </span>
           <span>{t.common.appName}</span>
+          <span className="version-tag">v{browser.runtime.getManifest().version}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <LanguageSwitcher lang={lang} onLanguageChange={setLanguage} variant="compact" />

@@ -125,21 +125,46 @@ async function trackTabVisit(tabId: number, windowId: number) {
       },
     ]);
   } catch (err) {
-    console.warn('[Atlas Tab] Failed to track tab visit:', err);
+    console.warn('[Tab Atlas] Failed to track tab visit:', err);
   }
 }
 
-function handleTabRemoved(tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) {
-  const cached = tabSnapshotCache.get(tabId);
+async function handleTabRemoved(tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) {
+  let cached = tabSnapshotCache.get(tabId);
   tabSnapshotCache.delete(tabId);
 
+  // If the entire window is closing, windows.onRemoved handles recording a single window_closed session
   if (removeInfo.isWindowClosing) {
     return;
   }
 
+  const windowId = removeInfo.windowId;
+
+  // Fallback: If cache was lost (e.g. Service Worker restarted), look up the tab from current live workspace
+  if (!cached || !cached.url) {
+    try {
+      const store = await repository.read();
+      const workspace = findWorkspaceByWindow(store, windowId);
+      if (workspace && workspace.tabs.length > 0) {
+        const currentTabs = await windowTabs(windowId);
+        const currentUrls = new Set(currentTabs.map((t) => extractWebUrl(t.url)).filter(Boolean));
+        const missingSavedTab = workspace.tabs.find((st) => st.url && !currentUrls.has(st.url));
+        if (missingSavedTab) {
+          cached = {
+            id: tabId,
+            url: missingSavedTab.url,
+            title: missingSavedTab.title || missingSavedTab.url,
+            favIconUrl: missingSavedTab.faviconUrl,
+            windowId,
+            isIncognito: Boolean(workspace.live.isIncognito),
+          };
+        }
+      }
+    } catch {}
+  }
+
   if (!cached || !cached.url) return;
 
-  const windowId = removeInfo.windowId;
   const entry: Omit<WorkspaceHistoryEntry, 'id'> = {
     tabId: cached.id,
     url: cached.url,
@@ -193,7 +218,7 @@ function handleTabRemoved(tabId: number, removeInfo: { windowId: number; isWindo
           await recordWorkspaceHistoryBatch(repository, workspace.id, entriesWithBatch);
         }
       } catch (err) {
-        console.warn('[Atlas Tab] Failed to record workspace closure history:', err);
+        console.warn('[Tab Atlas] Failed to record workspace closure history:', err);
       }
     }, 350)
   );
@@ -334,7 +359,7 @@ async function syncWindow(windowId: number): Promise<void> {
       tabs,
       isIncognito,
     });
-  } catch {
+      } catch {
     // The window disappeared between the event and this read; windows.onRemoved cleans up.
   }
 }
@@ -345,9 +370,7 @@ const openingWindows = new Set<number>();
 function scheduleSync(windowId: number | undefined): void {
   if (windowId === undefined || windowId === browser.windows.WINDOW_ID_NONE || openingWindows.has(windowId)) return;
 
-  const existing = pendingSyncs.get(windowId);
-  if (existing !== undefined) clearTimeout(existing);
-
+  clearTimeout(pendingSyncs.get(windowId));
   pendingSyncs.set(
     windowId,
     setTimeout(() => {
@@ -358,57 +381,93 @@ function scheduleSync(windowId: number | undefined): void {
 }
 
 async function resolveWindowId(sender: Browser.runtime.MessageSender): Promise<number | null> {
-  if (sender.tab?.windowId !== undefined && sender.tab.windowId !== browser.windows.WINDOW_ID_NONE) {
-    return sender.tab.windowId;
-  }
-  const focused = await browser.windows.getLastFocused({ populate: false });
+  if (sender.tab?.windowId !== undefined) return sender.tab.windowId;
+
+  const focused = await browser.windows.getLastFocused();
   return focused.id ?? null;
 }
 
 async function getWindowContext(windowId: number | null): Promise<WindowContext> {
   if (windowId === null) return { windowId: null, webTabCount: 0, workspace: null };
-  const store = await repository.read();
-  const workspace = findWorkspaceByWindow(store, windowId);
-  const tabs = await windowTabs(windowId);
+
+  const [store, tabs] = await Promise.all([repository.read(), windowTabs(windowId)]);
   return {
     windowId,
     webTabCount: tabs.filter(isWebTab).length,
-    workspace,
+    workspace: findWorkspaceByWindow(store, windowId),
   };
 }
 
-async function activateWorkspace(workspaceId: string, incognito?: boolean): Promise<Workspace> {
-  const inFlight = activating.get(workspaceId);
-  if (inFlight) {
-    await inFlight;
-    const current = await repository.get(workspaceId);
-    if (!current) throw new Error('Workspace not found.');
-    return current;
-  }
+/** Focuses the workspace window, or reopens the workspace in a window of its own. */
+async function activateWorkspace(workspaceId: string, incognito?: boolean) {
+  const key = `${workspaceId}_${incognito ? 'incognito' : 'normal'}`;
+  const inFlight = activating.get(key);
+  if (inFlight) return inFlight as Promise<ReturnType<typeof openWorkspaceWindow>>;
 
-  const task = openWorkspaceWindow(workspaceId, incognito);
-  activating.set(workspaceId, task);
-
-  try {
-    return (await task) as Workspace;
-  } finally {
-    activating.delete(workspaceId);
-  }
+  const run = openWorkspaceWindow(workspaceId, incognito).finally(() => activating.delete(key));
+  activating.set(key, run);
+  return run;
 }
 
-function toOpenTabUrl(tab: { url?: string; title?: string; faviconUrl?: string }, isActive: boolean, isIncognito: boolean): string {
-  const url = tab.url || 'about:blank';
-  if (isIncognito || isActive) {
-    return url;
-  }
-  const params = new URLSearchParams({
-    url,
-    title: tab.title || url,
-  });
-  if (tab.faviconUrl) {
-    params.set('favIconUrl', tab.faviconUrl);
-  }
-  return browser.runtime.getURL(`/suspended.html?${params.toString()}` as any);
+/**
+ * Sets up universal Chromium native tab discarding for all background tabs in a window.
+ * This frees renderer RAM (0 MB) without altering web URLs, preventing Chrome from auto-closing tabs.
+ */
+function setupWindowTabDiscarder(windowId: number, activeTabId?: number): void {
+  if (!browser.tabs?.discard) return;
+  const discardedTabIds = new Set<number>();
+
+  const discarder = (tabId: number, _changeInfo: any, tab: any) => {
+    if (tab.windowId === windowId && tabId !== activeTabId && !tab.active && !discardedTabIds.has(tabId)) {
+      if (tab.url && tab.url !== 'about:blank') {
+        discardedTabIds.add(tabId);
+        try {
+          void browser.tabs.discard(tabId).catch(() => {});
+        } catch {}
+      }
+    }
+  };
+
+  browser.tabs.onUpdated.addListener(discarder);
+
+  // Perform an initial sweep after 350ms for tabs that already committed their URLs
+  setTimeout(async () => {
+    try {
+      const currentTabs = await browser.tabs.query({ windowId });
+      for (const t of currentTabs) {
+        if (t.id && t.id !== activeTabId && !t.active && !discardedTabIds.has(t.id) && t.url && t.url !== 'about:blank') {
+          discardedTabIds.add(t.id);
+          try {
+            await browser.tabs.discard(t.id);
+          } catch {}
+        }
+      }
+    } catch {}
+  }, 350);
+
+  // Secondary sweep at 1500ms for tabs that took longer to initialize
+  setTimeout(async () => {
+    try {
+      const currentTabs = await browser.tabs.query({ windowId });
+      for (const t of currentTabs) {
+        if (t.id && t.id !== activeTabId && !t.active && !discardedTabIds.has(t.id) && t.url && t.url !== 'about:blank') {
+          discardedTabIds.add(t.id);
+          try {
+            await browser.tabs.discard(t.id);
+          } catch {}
+        }
+      }
+    } catch {}
+  }, 1500);
+
+  // Remove listener after initial tab burst settles
+  setTimeout(() => {
+    browser.tabs.onUpdated.removeListener(discarder);
+  }, 6000);
+}
+
+function toOpenTabUrl(tab: { url: string; title?: string; faviconUrl?: string }): string {
+  return tab.url;
 }
 
 async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
@@ -419,7 +478,7 @@ async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
     const isAllowed = await browser.extension.isAllowedIncognitoAccess();
     if (!isAllowed) {
       throw new Error(
-        'Chưa cấp quyền Ẩn danh. Vui lòng vào chrome://extensions -> Tìm "Atlas Tab" -> Bật "Cho phép ở chế độ ẩn danh" (Allow in Incognito).'
+        'Chưa cấp quyền Ẩn danh. Vui lòng vào chrome://extensions -> Tìm "Atlas Tab Online Edition" -> Bật "Cho phép ở chế độ ẩn danh" (Allow in Incognito).'
       );
     }
   }
@@ -432,6 +491,7 @@ async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
         await browser.windows.update(windowId, { focused: true });
         return workspace;
       }
+      // Mode differs: disconnect existing window before opening new window in requested mode
       await disconnectWindow(repository, windowId);
     } catch {
       await disconnectWindow(repository, windowId);
@@ -443,8 +503,9 @@ async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
 
   try {
     const isIncog = Boolean(incognito);
-    const urlsToOpen = validTabs.map((tab, idx) => toOpenTabUrl(tab, idx === 0, isIncog));
+    const urlsToOpen = validTabs.map((tab) => tab.url);
 
+    // Open all tabs in one single native call directly in the target window (Incognito or Normal)
     const created = await browser.windows.create({
       url: urlsToOpen,
       focused: true,
@@ -453,46 +514,16 @@ async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
     const createdId = created?.id;
     if (createdId === undefined) throw new Error('Chrome could not open a window for this workspace.');
 
+    // Suppress sync storms and re-render loops while window is initializing
     openingWindows.add(createdId);
 
+    // Bind window immediately to ensure live status is registered with all saved tabs intact
     await bindWindowToWorkspace(repository, { workspaceId, windowId: createdId, isIncognito: isIncog });
 
-    if (isIncog && browser.tabs.discard) {
-      const discardedTabIds = new Set<number>();
-      const activeTabId = created?.tabs?.[0]?.id;
+    // Universal Native Tab Discarding for background tabs to prevent CPU/RAM lag
+    setupWindowTabDiscarder(createdId, created?.tabs?.[0]?.id);
 
-      const incognitoDiscarder = (tabId: number, _changeInfo: any, tab: any) => {
-        if (tab.windowId === createdId && tabId !== activeTabId && !tab.active && !discardedTabIds.has(tabId)) {
-          if (tab.url && tab.url !== 'about:blank') {
-            discardedTabIds.add(tabId);
-            try {
-              void browser.tabs.discard(tabId).catch(() => {});
-            } catch {}
-          }
-        }
-      };
-
-      browser.tabs.onUpdated.addListener(incognitoDiscarder);
-
-      setTimeout(async () => {
-        try {
-          const currentTabs = await browser.tabs.query({ windowId: createdId });
-          for (const t of currentTabs) {
-            if (t.id && t.id !== activeTabId && !t.active && !discardedTabIds.has(t.id) && t.url && t.url !== 'about:blank') {
-              discardedTabIds.add(t.id);
-              try {
-                await browser.tabs.discard(t.id);
-              } catch {}
-            }
-          }
-        } catch {}
-      }, 350);
-
-      setTimeout(() => {
-        browser.tabs.onUpdated.removeListener(incognitoDiscarder);
-      }, 5000);
-    }
-
+    // Release sync lock after 3 seconds
     setTimeout(() => {
       openingWindows.delete(createdId);
     }, 3000);
@@ -501,7 +532,7 @@ async function openWorkspaceWindow(workspaceId: string, incognito?: boolean) {
     return synced ?? workspace;
   } catch (err: any) {
     if (incognito && (err?.message?.toLowerCase().includes('incognito') || err?.message?.toLowerCase().includes('permission'))) {
-      throw new Error('Chưa cấp quyền Ẩn danh. Vui lòng vào chrome://extensions -> Tìm "Atlas Tab" -> Bật "Cho phép ở chế độ ẩn danh" (Allow in Incognito).');
+      throw new Error('Chưa cấp quyền Ẩn danh. Vui lòng vào chrome://extensions -> Tìm "Atlas Tab Online Edition" -> Bật "Cho phép ở chế độ ẩn danh" (Allow in Incognito).');
     }
     throw err;
   }
@@ -587,6 +618,7 @@ async function handleMessage(message: ExtensionMessage, sender: Browser.runtime.
         throw new Error('Invalid JSON format.');
       }
 
+      // Check if top-level or wrapped in storage key object
       if (typeof parsed === 'object' && parsed !== null && 'tab-atlas.workspace-store' in parsed) {
         parsed = (parsed as Record<string, unknown>)['tab-atlas.workspace-store'];
       }
@@ -672,7 +704,7 @@ async function handleMessage(message: ExtensionMessage, sender: Browser.runtime.
             affectedGroups: message.targetUrls ? message.targetUrls.length : seenUrls.size,
           };
         } catch (err) {
-          console.warn('[Atlas Tab] Failed to remove duplicate tabs from live window, falling back to repository update:', err);
+          console.warn('[Tab Atlas] Failed to remove duplicate tabs from live window, falling back to repository update:', err);
         }
       }
 
@@ -710,17 +742,22 @@ async function handleMessage(message: ExtensionMessage, sender: Browser.runtime.
 
       if (targetWorkspace.live.status === 'connected' && windowId !== undefined) {
         try {
-          const isIncog = Boolean(targetWorkspace.live.isIncognito);
           for (const tab of validTabs) {
-            const openUrl = toOpenTabUrl(tab, false, isIncog);
-            await browser.tabs.create({ windowId, url: openUrl, active: false });
+            const createdTab = await browser.tabs.create({ windowId, url: tab.url, active: false });
+            if (createdTab.id && browser.tabs.discard) {
+              setTimeout(() => {
+                if (createdTab.id) {
+                  void browser.tabs.discard(createdTab.id).catch(() => {});
+                }
+              }, 400);
+            }
           }
           const currentTabs = await windowTabs(windowId);
           await syncWorkspaceFromWindow(repository, { windowId, tabs: currentTabs });
           const synced = await repository.get(message.workspaceId);
           if (synced) updatedWs = synced;
         } catch (err) {
-          console.warn('[Atlas Tab] Live window tab creation failed, falling back to repository update:', err);
+          console.warn('[Tab Atlas] Live window tab creation failed, falling back to repository update:', err);
           const res = await addTabsToWorkspace(repository, message.workspaceId, validTabs);
           updatedWs = res.workspace;
         }
@@ -729,15 +766,21 @@ async function handleMessage(message: ExtensionMessage, sender: Browser.runtime.
         updatedWs = res.workspace;
       }
 
+      // Close source tabs AFTER returning response so sender port is not disrupted
       if (message.closeSourceTabIds && message.closeSourceTabIds.length > 0) {
         const idsToRemove = message.closeSourceTabIds;
         setTimeout(async () => {
           try {
             await browser.tabs.remove(idsToRemove);
           } catch (err) {
-            console.warn('[Atlas Tab] Failed to close source tabs:', err);
+            console.warn('[Tab Atlas] Failed to close source tabs:', err);
           }
         }, 100);
+      }
+
+      try {
+      } catch (err) {
+        console.warn('[Tab Atlas] Cloud push warning:', err);
       }
 
       return {
@@ -823,7 +866,7 @@ async function handleMessage(message: ExtensionMessage, sender: Browser.runtime.
       let opened = 0;
       for (const ws of workspacesToOpen) {
         const isIncog = message.incognito !== undefined ? message.incognito : Boolean(ws.live.isIncognito);
-        const openTabs = ws.tabs.map((t) => toOpenTabUrl(t, false, isIncog));
+        const openTabs = ws.tabs.map((t) => t.url).filter(Boolean);
         if (openTabs.length > 0) {
           const win = await browser.windows.create({
             url: openTabs,
@@ -831,6 +874,7 @@ async function handleMessage(message: ExtensionMessage, sender: Browser.runtime.
             focused: opened === 0,
           });
           if (win && win.id !== undefined) {
+            setupWindowTabDiscarder(win.id, win.tabs?.[0]?.id);
             await bindWindowToWorkspace(repository, { workspaceId: ws.id, windowId: win.id, isIncognito: isIncog });
             opened++;
           }
@@ -892,7 +936,7 @@ export default defineBackground(() => {
 
   // Window teardown emits one removal per tab; windows.onRemoved handles that case.
   browser.tabs.onRemoved.addListener((tabId, info) => {
-    handleTabRemoved(tabId, info);
+    void handleTabRemoved(tabId, info);
     if (!info.isWindowClosing) scheduleSync(info.windowId);
   });
 
@@ -949,7 +993,7 @@ export default defineBackground(() => {
         await recordWorkspaceHistoryBatch(repository, workspace.id, [windowClosedEntry]);
       }
     } catch (err) {
-      console.warn('[Atlas Tab] Failed to record window_closed history:', err);
+      console.warn('[Tab Atlas] Failed to record window_closed history:', err);
     }
 
     await disconnectWindow(repository, windowId);

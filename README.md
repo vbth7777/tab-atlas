@@ -64,7 +64,7 @@ Installing manually takes only 1–2 minutes:
 ### Step 1 — Download the Release Package
 
 1. Go to the [**Latest Releases**](../../releases/latest) page.
-2. Under **Assets**, download `tab-atlas-0.1.5-chrome.zip`.
+2. Under **Assets**, download `tab-atlas-0.1.6-chrome.zip`.
 3. **Extract** the downloaded `.zip` file into a permanent folder on your computer (e.g., `C:\Extensions\TabAtlas`).
 
 ---
@@ -139,7 +139,7 @@ npm test
 ```bash
 npm run build
 ```
-Creates an unpacked extension bundle in `.output/chrome-mv3` and a distribution zip in `.output/tab-atlas-0.1.5-chrome.zip`.
+Creates an unpacked extension bundle in `.output/chrome-mv3` and a distribution zip in `.output/tab-atlas-0.1.6-chrome.zip`.
 
 ---
 
