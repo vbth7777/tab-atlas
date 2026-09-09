@@ -24,6 +24,7 @@ import {
   moveTabsBetweenWorkspaces,
   getTreeDuplicateTabGroups,
   deduplicateWorkspaceTree,
+  resolveMassDrop,
 } from '@/src/domain/workspace-service';
 import { EMPTY_STORE, type SavedTab, type Workspace, type WorkspaceStore } from '@/src/domain/workspace';
 import type { WorkspaceRepository } from '@/src/data/workspace-repository';
@@ -1038,6 +1039,128 @@ describe('workspace tree hierarchy and splitting', () => {
         value: 2,
       })
     ).rejects.toThrow('Chỉ có thể chia đều tab từ Workspace Gốc');
+  });
+
+  describe('Mass Tab Drop Protection', () => {
+    it('does not lock sync when user normally closes 1 tab', async () => {
+      const repository = new MemoryRepository();
+      const initialTabs = Array.from({ length: 10 }, (_, i) => ({
+        id: `tab_${i}`,
+        title: `Tab ${i}`,
+        url: `https://example.com/page/${i}`,
+        hostname: 'example.com',
+        savedAt: '2026-09-09T10:00:00Z',
+      }));
+
+      const ws: Workspace = {
+        id: 'ws_test',
+        name: 'Comics',
+        color: 'sky',
+        tabs: initialTabs,
+        live: { status: 'connected', windowId: 101 },
+        createdAt: '2026-09-09T10:00:00Z',
+        updatedAt: '2026-09-09T10:00:00Z',
+      };
+      await repository.save(ws);
+      await repository.update((store) => ({
+        store: { ...store, windowToWorkspace: { '101': 'ws_test' } },
+        result: undefined,
+      }));
+
+      // Close 1 tab (remaining 9 tabs)
+      const currentTabs = initialTabs.slice(0, 9).map((t, idx) => ({
+        id: idx + 1,
+        url: t.url,
+        title: t.title,
+        status: 'complete',
+      }));
+
+      const synced = await syncWorkspaceFromWindow(repository, {
+        windowId: 101,
+        tabs: currentTabs,
+      });
+
+      expect(synced?.tabs).toHaveLength(9);
+      expect(synced?.live.syncLocked).toBeFalsy();
+      expect(synced?.live.massDropWarning).toBeUndefined();
+    });
+
+    it('protects workspace tabs and locks sync when massive tabs disappear (OOM scenario)', async () => {
+      const repository = new MemoryRepository();
+      // 64 tabs
+      const initialTabs = Array.from({ length: 64 }, (_, i) => ({
+        id: `tab_${i}`,
+        title: `Comic Chapter ${i}`,
+        url: `https://vinahentai.lat/chapter/${i}`,
+        hostname: 'vinahentai.lat',
+        savedAt: '2026-09-09T10:00:00Z',
+      }));
+
+      const ws: Workspace = {
+        id: 'ws_comics',
+        name: 'Comics 2',
+        color: 'rose',
+        tabs: initialTabs,
+        live: { status: 'connected', windowId: 202 },
+        createdAt: '2026-09-09T10:00:00Z',
+        updatedAt: '2026-09-09T10:00:00Z',
+      };
+      await repository.save(ws);
+      await repository.update((store) => ({
+        store: { ...store, windowToWorkspace: { '202': 'ws_comics' } },
+        result: undefined,
+      }));
+
+      // Suddenly only 10 active tabs remain in window (54 sleeping tabs closed by OOM)
+      const survivingTabs = initialTabs.slice(0, 10).map((t, idx) => ({
+        id: idx + 1,
+        url: t.url,
+        title: t.title,
+        status: 'complete',
+      }));
+
+      const synced = await syncWorkspaceFromWindow(repository, {
+        windowId: 202,
+        tabs: survivingTabs,
+      });
+
+      // Crucial: Workspace tabs MUST be protected (still 64 tabs)!
+      expect(synced?.tabs).toHaveLength(64);
+      expect(synced?.live.syncLocked).toBe(true);
+      expect(synced?.live.massDropWarning).toBeDefined();
+      expect(synced?.live.massDropWarning?.previousCount).toBe(64);
+      expect(synced?.live.massDropWarning?.currentCount).toBe(10);
+      expect(synced?.live.massDropWarning?.droppedCount).toBe(54);
+      expect(synced?.live.massDropWarning?.missingTabs).toHaveLength(54);
+
+      // Rescue session snapshot must be created in history
+      const snapshotEntry = synced?.history?.find((h) => h.eventType === 'session_snapshot');
+      expect(snapshotEntry).toBeDefined();
+      expect(snapshotEntry?.tabsSnapshot).toHaveLength(64);
+
+      // Resolving with 'restore_missing' unlocks and returns the 54 missing tabs
+      const restoreRes = await resolveMassDrop(repository, {
+        workspaceId: 'ws_comics',
+        action: 'restore_missing',
+      });
+      expect(restoreRes.workspace.live.syncLocked).toBe(false);
+      expect(restoreRes.workspace.live.massDropWarning).toBeUndefined();
+      expect(restoreRes.missingTabsToRestore).toHaveLength(54);
+
+      // Resolving with 'accept_current' updates workspace with current tabs
+      // Re-trigger lock first
+      await syncWorkspaceFromWindow(repository, {
+        windowId: 202,
+        tabs: survivingTabs,
+      });
+      const acceptRes = await resolveMassDrop(repository, {
+        workspaceId: 'ws_comics',
+        action: 'accept_current',
+        currentTabs: survivingTabs,
+      });
+      expect(acceptRes.workspace.live.syncLocked).toBe(false);
+      expect(acceptRes.workspace.tabs).toHaveLength(10);
+    });
   });
 });
 

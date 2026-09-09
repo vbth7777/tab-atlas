@@ -165,6 +165,12 @@ export const en: TranslationSchema = {
     updatedWorkspaceSuccess: 'Workspace details updated.',
     clearedHistorySuccess: 'Workspace tab history cleared.',
     createdChildSuccess: 'Successfully created child workspace “{name}”!',
+    massDropAlertTitle: 'Detected {count} tabs suddenly closed (likely due to OOM/RAM pressure). Workspace was automatically protected.',
+    restoreMissingTabs: 'Restore {count} missing tabs into window (sleeping 0MB RAM)',
+    acceptCurrentTabs: 'Accept current tabs',
+    mergeSnapshotToLiveBtn: 'Merge into Current Window (0MB RAM)',
+    mergeSnapshotSuccess: 'Successfully merged {count} missing tabs into the current window (in RAM-saving sleeping state).',
+    sessionSnapshotTitle: 'Session Snapshot',
   },
   createChildModal: {
     title: 'Create Custom Child Workspace',

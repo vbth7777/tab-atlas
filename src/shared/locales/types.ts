@@ -173,6 +173,12 @@ export interface TranslationSchema {
     updatedWorkspaceSuccess: string;
     clearedHistorySuccess: string;
     createdChildSuccess: string;
+    massDropAlertTitle: string;
+    restoreMissingTabs: string;
+    acceptCurrentTabs: string;
+    mergeSnapshotToLiveBtn: string;
+    mergeSnapshotSuccess: string;
+    sessionSnapshotTitle: string;
   };
   createChildModal: {
     title: string;

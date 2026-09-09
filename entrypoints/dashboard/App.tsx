@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { isConnected, type Workspace, type WorkspaceColor, type SavedTab } from '@/src/domain/workspace';
+import { isConnected, type Workspace, type WorkspaceColor, type SavedTab, type WorkspaceHistoryEntry } from '@/src/domain/workspace';
 import {
   getDuplicateTabGroups,
   buildWorkspaceTree,
@@ -514,6 +514,37 @@ export default function Dashboard() {
     });
   };
 
+  const handleMergeSnapshotToLive = (entry: WorkspaceHistoryEntry) => {
+    if (!selected) return;
+    const snapshotTabs = entry.tabsSnapshot || [];
+    if (snapshotTabs.length === 0) return;
+
+    return run(async () => {
+      const res = await sendMessage({
+        type: 'merge-snapshot-to-live',
+        workspaceId: selected.id,
+        snapshotTabs,
+      });
+      await loadAll();
+      return t.dashboard.mergeSnapshotSuccess.replace('{count}', String(res.restoredCount));
+    });
+  };
+
+  const handleResolveMassDrop = (action: 'restore_missing' | 'accept_current') => {
+    if (!selected) return;
+    return run(async () => {
+      const res = await sendMessage({
+        type: 'resolve-mass-drop',
+        workspaceId: selected.id,
+        action,
+      });
+      await loadAll();
+      return action === 'restore_missing'
+        ? t.dashboard.mergeSnapshotSuccess.replace('{count}', String(res.restoredCount ?? 0))
+        : t.dashboard.updatedWorkspaceSuccess;
+    });
+  };
+
   return (
     <main className="dashboard-shell">
       {/* Sidebar with Tree Hierarchy Navigation & Drop Targets */}
@@ -993,6 +1024,42 @@ export default function Dashboard() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Mass Drop Protection Alert Banner */}
+            {selected.live.syncLocked && selected.live.massDropWarning && (
+              <div className="mass-drop-alert-banner">
+                <div className="mass-drop-alert-content">
+                  <div className="mass-drop-alert-icon">
+                    <Icon name="alert-circle" size={18} />
+                  </div>
+                  <div>
+                    <div className="mass-drop-alert-title">
+                      {t.dashboard.massDropAlertTitle.replace('{count}', String(selected.live.massDropWarning.droppedCount))}
+                    </div>
+                    <div className="mass-drop-alert-subtitle">
+                      {`Cửa sổ sụt giảm từ ${selected.live.massDropWarning.previousCount} xuống còn ${selected.live.massDropWarning.currentCount} tab.`}
+                    </div>
+                  </div>
+                </div>
+                <div className="mass-drop-alert-actions">
+                  <button
+                    type="button"
+                    className="primary-button compact"
+                    onClick={() => handleResolveMassDrop('restore_missing')}
+                  >
+                    <Icon name="rotate-ccw" size={13} />
+                    <span>{t.dashboard.restoreMissingTabs.replace('{count}', String(selected.live.massDropWarning.droppedCount))}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button compact"
+                    onClick={() => handleResolveMassDrop('accept_current')}
+                  >
+                    <span>{t.dashboard.acceptCurrentTabs}</span>
+                  </button>
                 </div>
               </div>
             )}

@@ -27,3 +27,5 @@ web-ext.config.ts
 
 # Promo website (separate repo)
 website-promo/
+
+.agents/

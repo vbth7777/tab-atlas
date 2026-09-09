@@ -123,7 +123,7 @@ export async function createLiveWorkspace(
 /** Mirrors the live contents of a window into the workspace that owns it. */
 export async function syncWorkspaceFromWindow(
   repository: WorkspaceRepository,
-  input: { windowId: number; tabs: TabSnapshot[]; isIncognito?: boolean },
+  input: { windowId: number; tabs: TabSnapshot[]; isIncognito?: boolean; allowMassDrop?: boolean },
 ): Promise<Workspace | null> {
   const now = new Date().toISOString();
 
@@ -145,19 +145,150 @@ export async function syncWorkspaceFromWindow(
       effectiveTabs = workspace.tabs;
     }
 
+    // Mass Tab Drop Protection:
+    // If tabs in the window suddenly decrease significantly (e.g. >= 4 tabs and >= 25% of total),
+    // and this is not an explicitly approved drop:
+    // 1. DO NOT drop tabs from workspace.tabs.
+    // 2. Lock synchronization and record massDropWarning.
+    // 3. Automatically record a rescue session_snapshot into history.
+    const previousCount = workspace.tabs.length;
+    const droppedCount = previousCount - newTabs.length;
+    const isMassDrop =
+      !input.allowMassDrop &&
+      !workspace.live.syncLocked &&
+      previousCount >= 5 &&
+      droppedCount >= 4 &&
+      droppedCount / previousCount >= 0.25;
+
+    let updatedLive = {
+      ...workspace.live,
+      status: 'connected' as const,
+      windowId: input.windowId,
+      isIncognito: input.isIncognito ?? workspace.live.isIncognito,
+      lastSyncedAt: now,
+    };
+
+    let updatedHistory = workspace.history;
+
+    if (isMassDrop) {
+      effectiveTabs = workspace.tabs; // Preserve original saved tabs!
+      const openUrls = new Set(newTabs.map((t) => t.url));
+      const missingTabs = workspace.tabs
+        .filter((t) => !openUrls.has(t.url))
+        .map((t) => ({ url: t.url, title: t.title, faviconUrl: t.faviconUrl }));
+
+      updatedLive = {
+        ...updatedLive,
+        syncLocked: true,
+        massDropWarning: {
+          detectedAt: now,
+          previousCount,
+          currentCount: newTabs.length,
+          droppedCount,
+          missingTabs,
+        },
+      };
+
+      const rescueSnapshot: WorkspaceHistoryEntry = {
+        id: createId('hist'),
+        url: workspace.tabs[0]?.url || 'workspace://window',
+        title: `Mass drop protection snapshot (${previousCount} tabs preserved)`,
+        faviconUrl: workspace.tabs[0]?.faviconUrl,
+        hostname: `${previousCount} tabs`,
+        timestamp: now,
+        eventType: 'session_snapshot',
+        tabCount: previousCount,
+        isIncognito: Boolean(input.isIncognito ?? workspace.live.isIncognito),
+        tabsSnapshot: workspace.tabs.map((t) => ({
+          title: t.title,
+          url: t.url,
+          faviconUrl: t.faviconUrl,
+        })),
+      };
+      updatedHistory = [rescueSnapshot, ...(workspace.history || [])].slice(0, MAX_WORKSPACE_HISTORY);
+    } else if (workspace.live.syncLocked && !input.allowMassDrop) {
+      // Sync is currently locked: keep workspace tabs protected
+      effectiveTabs = workspace.tabs;
+      if (updatedLive.massDropWarning) {
+        updatedLive.massDropWarning = {
+          ...updatedLive.massDropWarning,
+          currentCount: newTabs.length,
+        };
+      }
+    } else if (input.allowMassDrop) {
+      // Explicitly allowed: clear locks
+      updatedLive.syncLocked = false;
+      updatedLive.massDropWarning = undefined;
+    }
+
     const updated: Workspace = {
       ...workspace,
       tabs: effectiveTabs,
-      live: {
-        status: 'connected',
-        windowId: input.windowId,
-        isIncognito: input.isIncognito ?? workspace.live.isIncognito,
-        lastSyncedAt: now,
-      },
+      history: updatedHistory,
+      live: updatedLive,
       updatedAt: now,
     };
 
     return { store: replaceWorkspace(store, updated), result: updated };
+  });
+}
+
+export async function resolveMassDrop(
+  repository: WorkspaceRepository,
+  input: {
+    workspaceId: string;
+    action: 'restore_missing' | 'accept_current';
+    currentTabs?: TabSnapshot[];
+  },
+): Promise<{ workspace: Workspace; missingTabsToRestore?: Array<{ url: string; title: string; faviconUrl?: string }> }> {
+  const now = new Date().toISOString();
+
+  return repository.update<{
+    workspace: Workspace;
+    missingTabsToRestore?: Array<{ url: string; title: string; faviconUrl?: string }>;
+  }>((store) => {
+    const workspace = store.workspaces.find((w) => w.id === input.workspaceId);
+    if (!workspace) throw new Error('Workspace not found.');
+
+    const warning = workspace.live.massDropWarning;
+    const missingTabs = warning?.missingTabs || [];
+
+    if (input.action === 'restore_missing') {
+      const updated: Workspace = {
+        ...workspace,
+        live: {
+          ...workspace.live,
+          syncLocked: false,
+          massDropWarning: undefined,
+          lastSyncedAt: now,
+        },
+        updatedAt: now,
+      };
+      return {
+        store: replaceWorkspace(store, updated),
+        result: { workspace: updated, missingTabsToRestore: missingTabs },
+      };
+    } else {
+      let effectiveTabs = workspace.tabs;
+      if (input.currentTabs) {
+        effectiveTabs = toSavedTabs(input.currentTabs, now);
+      }
+      const updated: Workspace = {
+        ...workspace,
+        tabs: effectiveTabs,
+        live: {
+          ...workspace.live,
+          syncLocked: false,
+          massDropWarning: undefined,
+          lastSyncedAt: now,
+        },
+        updatedAt: now,
+      };
+      return {
+        store: replaceWorkspace(store, updated),
+        result: { workspace: updated, missingTabsToRestore: undefined },
+      };
+    }
   });
 }
 

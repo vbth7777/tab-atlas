@@ -34,9 +34,17 @@ export interface WorkspaceLiveState {
   windowId?: number;
   isIncognito?: boolean;
   lastSyncedAt?: string;
+  syncLocked?: boolean;
+  massDropWarning?: {
+    detectedAt: string;
+    previousCount: number;
+    currentCount: number;
+    droppedCount: number;
+    missingTabs: Array<{ url: string; title: string; faviconUrl?: string }>;
+  };
 }
 
-export type TabHistoryEventType = 'opened' | 'visited' | 'closed' | 'window_closed';
+export type TabHistoryEventType = 'opened' | 'visited' | 'closed' | 'window_closed' | 'session_snapshot';
 
 export interface WorkspaceHistoryEntry {
   id: string;

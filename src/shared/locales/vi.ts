@@ -165,6 +165,12 @@ export const vi: TranslationSchema = {
     updatedWorkspaceSuccess: 'Đã cập nhật thông tin workspace.',
     clearedHistorySuccess: 'Đã dọn sạch lịch sử workspace.',
     createdChildSuccess: 'Đã tạo workspace con “{name}” thành công!',
+    massDropAlertTitle: 'Phát hiện {count} tab bị đóng đột ngột (nghi do tràn RAM / crash trình duyệt). Workspace đã được tự động bảo vệ an toàn.',
+    restoreMissingTabs: 'Nối {count} tab bị thiếu vào cửa sổ (chế độ ngủ 0MB RAM)',
+    acceptCurrentTabs: 'Chấp nhận số tab hiện tại',
+    mergeSnapshotToLiveBtn: 'Nối vào cửa sổ hiện tại (ngủ 0MB RAM)',
+    mergeSnapshotSuccess: 'Đã nối thành công {count} tab vào cửa sổ hiện tại (ở chế độ ngủ tiết kiệm RAM).',
+    sessionSnapshotTitle: 'Bản Sao Lưu Phiên Tab (Snapshot)',
   },
   createChildModal: {
     title: 'Tạo Workspace Con Tùy Chỉnh',

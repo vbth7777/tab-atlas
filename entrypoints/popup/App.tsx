@@ -340,6 +340,57 @@ export default function App() {
         </div>
       )}
 
+      {/* Mass Drop Protection Alert Banner in Popup */}
+      {linked && linked.live.syncLocked && linked.live.massDropWarning && (
+        <div className="popup-dedup-banner" style={{ background: 'rgba(245, 158, 11, 0.1)', borderColor: 'rgba(245, 158, 11, 0.4)' }}>
+          <div className="popup-dedup-info" style={{ color: '#fbbf24' }}>
+            <Icon name="alert-circle" size={13} />
+            <span>
+              {t.dashboard.massDropAlertTitle.replace('{count}', String(linked.live.massDropWarning.droppedCount))}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              className="popup-dedup-btn"
+              style={{ background: '#d97706', borderColor: '#b45309', color: '#fff' }}
+              onClick={() =>
+                run(async () => {
+                  const res = await sendMessage({
+                    type: 'resolve-mass-drop',
+                    workspaceId: linked.id,
+                    action: 'restore_missing',
+                  });
+                  return t.dashboard.mergeSnapshotSuccess.replace('{count}', String(res.restoredCount ?? 0));
+                })
+              }
+              disabled={busy}
+            >
+              <Icon name="rotate-ccw" size={11} />
+              <span>{t.dashboard.restoreMissingTabs.replace('{count}', String(linked.live.massDropWarning.droppedCount))}</span>
+            </button>
+            <button
+              type="button"
+              className="popup-dedup-btn"
+              style={{ background: 'transparent', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fcd34d' }}
+              onClick={() =>
+                run(async () => {
+                  await sendMessage({
+                    type: 'resolve-mass-drop',
+                    workspaceId: linked.id,
+                    action: 'accept_current',
+                  });
+                  return t.dashboard.updatedWorkspaceSuccess;
+                })
+              }
+              disabled={busy}
+            >
+              <span>{t.dashboard.acceptCurrentTabs}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Duplicate Tabs Alert Banner */}
       {linked && linkedDuplicates.length > 0 && (
         <div className="popup-dedup-banner">

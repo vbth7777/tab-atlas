@@ -61,6 +61,17 @@ export type ExtensionMessage =
       type: 'activate-tree';
       parentWorkspaceId: string;
       incognito?: boolean;
+    }
+  | {
+      type: 'merge-snapshot-to-live';
+      workspaceId: string;
+      snapshotTabs: Array<{ url: string; title?: string; faviconUrl?: string }>;
+      windowId?: number;
+    }
+  | {
+      type: 'resolve-mass-drop';
+      workspaceId: string;
+      action: 'restore_missing' | 'accept_current';
     };
 
 /** Describes the window the UI is acting on, so it can offer the right action. */
@@ -95,6 +106,8 @@ export interface MessageMap {
   'move-tabs-between-workspaces': { ok: true; source: Workspace; target: Workspace; movedCount: number };
   'deduplicate-tree': { ok: true; affectedWorkspacesCount: number; totalRemovedCount: number };
   'activate-tree': { ok: true; openedCount: number };
+  'merge-snapshot-to-live': { ok: true; restoredCount: number; workspace: Workspace };
+  'resolve-mass-drop': { ok: true; workspace: Workspace; restoredCount?: number };
 }
 
 export type ExtensionResponse = MessageMap[keyof MessageMap] | { ok: false; error: string };

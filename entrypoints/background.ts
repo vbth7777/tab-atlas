@@ -20,6 +20,7 @@ import {
   createChildWorkspace,
   moveTabsBetweenWorkspaces,
   deduplicateWorkspaceTree,
+  resolveMassDrop,
 } from '@/src/domain/workspace-service';
 import type { Workspace, WorkspaceHistoryEntry } from '@/src/domain/workspace';
 import type { ExtensionMessage, ExtensionResponse, WindowContext } from '@/src/shared/messages';
@@ -464,6 +465,33 @@ function setupWindowTabDiscarder(windowId: number, activeTabId?: number): void {
   setTimeout(() => {
     browser.tabs.onUpdated.removeListener(discarder);
   }, 6000);
+}
+
+async function createDiscardedTab(windowId: number | undefined, url: string): Promise<void> {
+  const createProps: any = { url, active: false };
+  if (windowId !== undefined) {
+    createProps.windowId = windowId;
+  }
+  const created = await browser.tabs.create(createProps);
+  if (created.id && browser.tabs.discard) {
+    try {
+      await browser.tabs.discard(created.id);
+    } catch {}
+    setTimeout(async () => {
+      if (created.id) {
+        try {
+          await browser.tabs.discard(created.id);
+        } catch {}
+      }
+    }, 150);
+    setTimeout(async () => {
+      if (created.id) {
+        try {
+          await browser.tabs.discard(created.id);
+        } catch {}
+      }
+    }, 600);
+  }
 }
 
 function toOpenTabUrl(tab: { url: string; title?: string; faviconUrl?: string }): string {

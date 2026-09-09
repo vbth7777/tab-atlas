@@ -2410,3 +2410,68 @@ input { border: 1px solid var(--border-strong); border-radius: 8px; color: var(-
   border-color: #34d399;
   color: #34d399;
 }
+
+/* ==========================================================================
+   Mass Tab Drop Protection Alert Banner
+   ========================================================================== */
+.mass-drop-alert-banner {
+  margin: 14px 0;
+  padding: 14px 18px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.mass-drop-alert-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 280px;
+}
+
+.mass-drop-alert-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.mass-drop-alert-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fef3c7;
+  line-height: 1.4;
+}
+
+.mass-drop-alert-subtitle {
+  font-size: 11.5px;
+  color: #fcd34d;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+.mass-drop-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.history-type-badge.session_snapshot {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+}
+
