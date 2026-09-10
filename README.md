@@ -32,7 +32,6 @@ It is local-first, requires no sign-up or servers, and stores all data securely 
 ### Memory & Performance
 - **Native tab discarding**: Automatically discards background tabs using Chromium's native discard API to free memory (0 MB RAM) without losing tab state.
 - **Mass tab drop protection**: Automatically freezes synchronization and creates emergency snapshots if background tabs close unexpectedly due to system memory pressure or OOM.
-- **Tab suspender interoperability**: Compatible with tab suspender extensions (`chrome-extension://.../suspended.html`), preserving true URLs, titles, and icons.
 - **Incognito support**: Launch workspaces into incognito mode with zero background RAM buildup.
 
 > [!WARNING]
