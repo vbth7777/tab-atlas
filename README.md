@@ -30,9 +30,15 @@ It is local-first, requires no sign-up or servers, and stores all data securely 
 - **Search & deduplication**: Search tabs across the current workspace or the entire tree hierarchy. Find and remove duplicate tabs with one click.
 
 ### Memory & Performance
-- **Native tab discarding**: Automatically discards background tabs using Chromium's native discard API to free memory without losing tab state.
-- **Tab suspender**: Optional lightweight placeholder mode (`suspended.html`) for heavy background tabs.
+- **Native tab discarding**: Automatically discards background tabs using Chromium's native discard API to free memory (0 MB RAM) without losing tab state.
+- **Mass tab drop protection**: Automatically freezes synchronization and creates emergency snapshots if background tabs close unexpectedly due to system memory pressure or OOM.
+- **Tab suspender interoperability**: Compatible with tab suspender extensions (`chrome-extension://.../suspended.html`), preserving true URLs, titles, and icons.
 - **Incognito support**: Launch workspaces into incognito mode with zero background RAM buildup.
+
+> [!WARNING]
+> **Important Note for Third-Party Tab Suspender Users:**
+> If you use external extensions such as *The Great Suspender*, *Auto Tab Discard*, *Tab Wrangler*, or similar tab-suspension tools alongside Tab Atlas, **please ensure you disable any "Auto-close tabs" or "Close inactive tabs after X time" settings** in their options.
+> When an external extension automatically closes an idle tab to save memory, Tab Atlas's real-time sync treats it as a user-initiated tab closure and removes the tab from your workspace. Tab Atlas already provides built-in native background tab discarding (0 MB RAM per background tab), so external auto-closing is unnecessary and can cause gradual tab loss.
 
 ### Storage & Privacy
 - **100% local-first**: All data stays inside `chrome.storage.local`. Zero network requests, zero telemetry, and works completely offline.
