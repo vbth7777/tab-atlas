@@ -81,6 +81,14 @@ export interface WindowContext {
   workspace: Workspace | null;
 }
 
+export interface WatchdogAuditLogEntry {
+  timestamp: string;
+  tabId: number;
+  workspaceId: string;
+  workspaceName: string;
+  recoveredUrl: string;
+}
+
 export interface MessageMap {
   'list-workspaces': { ok: true; workspaces: Workspace[] };
   'get-window-context': { ok: true; context: WindowContext };
@@ -108,6 +116,7 @@ export interface MessageMap {
   'activate-tree': { ok: true; openedCount: number };
   'merge-snapshot-to-live': { ok: true; restoredCount: number; workspace: Workspace };
   'resolve-mass-drop': { ok: true; workspace: Workspace; restoredCount?: number };
+  'get-watchdog-logs': { ok: true; logs: WatchdogAuditLogEntry[] };
 }
 
 export type ExtensionResponse = MessageMap[keyof MessageMap] | { ok: false; error: string };

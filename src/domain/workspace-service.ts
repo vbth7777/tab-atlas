@@ -135,8 +135,8 @@ export async function syncWorkspaceFromWindow(
 
     // Protection against transient empty/loading tab snapshots:
     // 1. If window has tabs, but toSavedTabs returned 0 web tabs (all loading / pending): keep existing tabs.
-    // 2. If some tabs are still in 'loading' status and newTabs count is smaller than existing workspace tabs: keep existing tabs.
-    const hasLoadingTabs = input.tabs.some((t) => t.status === 'loading' || (!t.url && !t.pendingUrl));
+    // 2. If some tabs are still in 'loading' status or temporarily 'about:blank' and newTabs count is smaller than existing workspace tabs: keep existing tabs.
+    const hasLoadingTabs = input.tabs.some((t) => t.status === 'loading' || (!t.url && !t.pendingUrl) || t.url === 'about:blank');
     let effectiveTabs = newTabs;
 
     if (input.tabs.length > 0 && newTabs.length === 0 && workspace.tabs.length > 0) {
@@ -527,13 +527,13 @@ export async function deleteWorkspace(
 
 export function mergeWorkspaceStores(
   localStore: WorkspaceStore,
-  cloudStore: WorkspaceStore | null | undefined
+  cloudStore: WorkspaceStore | null | undefined,
+  nowMs = Date.now()
 ): WorkspaceStore {
   if (!cloudStore || !Array.isArray(cloudStore.workspaces)) {
     return localStore;
   }
 
-  const nowMs = Date.now();
   const maxAgeMs = 60 * 24 * 60 * 60 * 1000; // Purge tombstones older than 60 days
 
   // Merge deletedWorkspaces records from both local and cloud

@@ -365,7 +365,8 @@ describe('mergeWorkspaceStores', () => {
       deletedWorkspaces: {},
     };
 
-    const merged = mergeWorkspaceStores(localStore, cloudStore);
+    const testNowMs = new Date('2026-08-01T16:00:00Z').getTime();
+    const merged = mergeWorkspaceStores(localStore, cloudStore, testNowMs);
     // ws_deleted must NOT be resurrected!
     expect(merged.workspaces).toHaveLength(1);
     expect(merged.workspaces[0]!.id).toBe('ws_active');
@@ -399,7 +400,8 @@ describe('mergeWorkspaceStores', () => {
       },
     };
 
-    const merged = mergeWorkspaceStores(localStore, cloudStore);
+    const testNowMs = new Date('2026-08-01T16:00:00Z').getTime();
+    const merged = mergeWorkspaceStores(localStore, cloudStore, testNowMs);
     // Must be deleted on local device as well
     expect(merged.workspaces).toHaveLength(0);
     expect(merged.deletedWorkspaces?.ws_remote_del).toBe('2026-08-01T15:00:00Z');
@@ -1160,6 +1162,42 @@ describe('workspace tree hierarchy and splitting', () => {
       });
       expect(acceptRes.workspace.live.syncLocked).toBe(false);
       expect(acceptRes.workspace.tabs).toHaveLength(10);
+    });
+
+    it('preserves existing workspace tabs when a tab temporarily turns into about:blank', async () => {
+      const repository = new MemoryRepository({
+        schemaVersion: 2,
+        workspaces: [
+          {
+            id: 'ws_test_blank',
+            name: 'Test Blank Protection',
+            color: 'blue',
+            tabs: [
+              { id: 't1', title: 'GitHub', url: 'https://github.com', hostname: 'github.com', savedAt: '2026-08-01T10:00:00Z' },
+              { id: 't2', title: 'Google', url: 'https://google.com', hostname: 'google.com', savedAt: '2026-08-01T10:00:00Z' },
+            ],
+            live: { status: 'connected', windowId: 999 },
+            createdAt: '2026-08-01T10:00:00Z',
+            updatedAt: '2026-08-01T10:00:00Z',
+          },
+        ],
+        windowToWorkspace: { '999': 'ws_test_blank' },
+      });
+
+      // Window snapshot where tab 2 is temporarily about:blank (e.g. during discard or crash)
+      const tabsSnapshot: TabSnapshot[] = [
+        { id: 1, title: 'GitHub', url: 'https://github.com', status: 'complete' },
+        { id: 2, title: '', url: 'about:blank', status: 'loading' },
+      ];
+
+      const res = await syncWorkspaceFromWindow(repository, {
+        windowId: 999,
+        tabs: tabsSnapshot,
+      });
+
+      // Should keep both saved tabs instead of dropping tab 2
+      expect(res?.tabs).toHaveLength(2);
+      expect(res?.tabs.map((t) => t.url)).toEqual(['https://github.com', 'https://google.com']);
     });
   });
 });

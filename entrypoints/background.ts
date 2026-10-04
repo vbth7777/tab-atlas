@@ -23,7 +23,7 @@ import {
   resolveMassDrop,
 } from '@/src/domain/workspace-service';
 import type { Workspace, WorkspaceHistoryEntry } from '@/src/domain/workspace';
-import type { ExtensionMessage, ExtensionResponse, WindowContext } from '@/src/shared/messages';
+import type { ExtensionMessage, ExtensionResponse, WindowContext, WatchdogAuditLogEntry } from '@/src/shared/messages';
 
 const SYNC_DEBOUNCE_MS = 250;
 
@@ -46,6 +46,109 @@ const globalRecentlyClosed: WorkspaceHistoryEntry[] = [];
 const pendingClosureBuffer = new Map<number, Array<Omit<WorkspaceHistoryEntry, 'id'>>>();
 const pendingClosureTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const lastRecordedVisits = new Map<string, number>();
+
+// Auto-Healing Watchdog State
+const watchdogHistory: WatchdogAuditLogEntry[] = [];
+const healingAttempts = new Map<number, { count: number; lastTime: number }>();
+
+/**
+ * Auto-Healing Watchdog:
+ * Detects if a tab in a connected live workspace unexpectedly transitions to 'about:blank'
+ * (e.g. from premature browser.tabs.discard or Chromium navigation abortion)
+ * and safely reverts it back to its original URL.
+ *
+ * For regular users: 100% silent and transparent in the background.
+ * For developers: Styled console logs in Service Worker DevTools + getWatchdogLogs() inspection.
+ */
+async function checkAndHealBlankTab(tabId: number, tab: { url?: string; windowId?: number }): Promise<boolean> {
+  if (!tab.url || tab.url !== 'about:blank') return false;
+  const windowId = tab.windowId;
+  if (windowId === undefined || windowId === browser.windows.WINDOW_ID_NONE) return false;
+
+  const store = await repository.read();
+  const workspace = findWorkspaceByWindow(store, windowId);
+  if (!workspace || workspace.live.status !== 'connected') return false;
+
+  // 1. Recover original URL: check tabSnapshotCache, then session storage, then workspace saved tabs
+  let originalUrl: string | null = null;
+  const cached = tabSnapshotCache.get(tabId);
+  if (cached?.url) {
+    originalUrl = extractWebUrl(cached.url);
+  }
+
+  if (!originalUrl && browser.storage?.session) {
+    try {
+      const res = await browser.storage.session.get([`tab_${tabId}`]);
+      const sessionCached = res[`tab_${tabId}`] as CachedTabInfo | undefined;
+      if (sessionCached?.url) {
+        originalUrl = extractWebUrl(sessionCached.url);
+      }
+    } catch {}
+  }
+
+  // Fallback: match missing tab from workspace tabs against current open URLs in window
+  if (!originalUrl && workspace.tabs.length > 0) {
+    try {
+      const currentTabs = await browser.tabs.query({ windowId });
+      const openUrls = new Set(currentTabs.map((t) => extractWebUrl(t.url)).filter(Boolean));
+      const missingSavedTab = workspace.tabs.find((st) => st.url && !openUrls.has(st.url));
+      if (missingSavedTab?.url) {
+        originalUrl = extractWebUrl(missingSavedTab.url);
+      }
+    } catch {}
+  }
+
+  // If this tab never had a web URL (e.g. user pressed Ctrl+T to open a new tab), do NOT touch it!
+  if (!originalUrl) return false;
+
+  // 2. Circuit Breaker: prevent infinite loop if a page keeps redirecting/crashing to about:blank
+  const now = Date.now();
+  const attempt = healingAttempts.get(tabId) || { count: 0, lastTime: now };
+  if (now - attempt.lastTime < 10000 && attempt.count >= 2) {
+    console.warn(`[Atlas Watchdog] Tab ${tabId} repeatedly turned into about:blank, circuit breaker tripped.`);
+    return false;
+  }
+
+  healingAttempts.set(tabId, {
+    count: (now - attempt.lastTime < 10000 ? attempt.count : 0) + 1,
+    lastTime: now,
+  });
+
+  // 3. Record in audit log (dev only ring buffer, max 30 entries)
+  const auditEntry: WatchdogAuditLogEntry = {
+    timestamp: new Date().toISOString(),
+    tabId,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    recoveredUrl: originalUrl,
+  };
+  watchdogHistory.unshift(auditEntry);
+  if (watchdogHistory.length > 30) watchdogHistory.pop();
+
+  // 4. Styled Dev Log for developers in Service Worker Console
+  console.info(
+    `%c[Atlas Watchdog]%c Healed tab #${tabId} in [${workspace.name}] ➔ %c${originalUrl}`,
+    'background: #0284c7; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;',
+    'color: #38bdf8; font-weight: bold;',
+    'color: #4ade80; text-decoration: underline;',
+    auditEntry
+  );
+
+  // 5. Silent Revert: reload original URL
+  try {
+    await browser.tabs.update(tabId, { url: originalUrl });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Expose getWatchdogLogs to globalThis for instant dev inspection via Console
+(globalThis as any).getWatchdogLogs = () => {
+  console.table(watchdogHistory);
+  return watchdogHistory;
+};
+
 
 function getHostname(url: string): string {
   try {
@@ -420,7 +523,8 @@ function setupWindowTabDiscarder(windowId: number, activeTabId?: number): void {
 
   const discarder = (tabId: number, _changeInfo: any, tab: any) => {
     if (tab.windowId === windowId && tabId !== activeTabId && !tab.active && !discardedTabIds.has(tabId)) {
-      if (tab.url && tab.url !== 'about:blank') {
+      // ONLY discard once the tab has completed its initial navigation
+      if (tab.url && tab.url !== 'about:blank' && tab.status === 'complete') {
         discardedTabIds.add(tabId);
         try {
           void browser.tabs.discard(tabId).catch(() => {});
@@ -431,12 +535,20 @@ function setupWindowTabDiscarder(windowId: number, activeTabId?: number): void {
 
   browser.tabs.onUpdated.addListener(discarder);
 
-  // Perform an initial sweep after 350ms for tabs that already committed their URLs
-  setTimeout(async () => {
+  // Safe sweeps: only discard tabs that finished loading to avoid aborting navigation
+  const safeSweep = async () => {
     try {
       const currentTabs = await browser.tabs.query({ windowId });
       for (const t of currentTabs) {
-        if (t.id && t.id !== activeTabId && !t.active && !discardedTabIds.has(t.id) && t.url && t.url !== 'about:blank') {
+        if (
+          t.id &&
+          t.id !== activeTabId &&
+          !t.active &&
+          !discardedTabIds.has(t.id) &&
+          t.url &&
+          t.url !== 'about:blank' &&
+          t.status === 'complete'
+        ) {
           discardedTabIds.add(t.id);
           try {
             await browser.tabs.discard(t.id);
@@ -444,27 +556,16 @@ function setupWindowTabDiscarder(windowId: number, activeTabId?: number): void {
         }
       }
     } catch {}
-  }, 350);
+  };
 
-  // Secondary sweep at 1500ms for tabs that took longer to initialize
-  setTimeout(async () => {
-    try {
-      const currentTabs = await browser.tabs.query({ windowId });
-      for (const t of currentTabs) {
-        if (t.id && t.id !== activeTabId && !t.active && !discardedTabIds.has(t.id) && t.url && t.url !== 'about:blank') {
-          discardedTabIds.add(t.id);
-          try {
-            await browser.tabs.discard(t.id);
-          } catch {}
-        }
-      }
-    } catch {}
-  }, 1500);
+  setTimeout(safeSweep, 500);
+  setTimeout(safeSweep, 1500);
+  setTimeout(safeSweep, 3000);
 
   // Remove listener after initial tab burst settles
   setTimeout(() => {
     browser.tabs.onUpdated.removeListener(discarder);
-  }, 6000);
+  }, 8000);
 }
 
 async function createDiscardedTab(windowId: number | undefined, url: string): Promise<void> {
@@ -474,23 +575,17 @@ async function createDiscardedTab(windowId: number | undefined, url: string): Pr
   }
   const created = await browser.tabs.create(createProps);
   if (created.id && browser.tabs.discard) {
-    try {
-      await browser.tabs.discard(created.id);
-    } catch {}
-    setTimeout(async () => {
-      if (created.id) {
-        try {
-          await browser.tabs.discard(created.id);
-        } catch {}
+    const tabId = created.id;
+    const onTabComplete = (id: number, changeInfo: any) => {
+      if (id === tabId && changeInfo.status === 'complete') {
+        browser.tabs.onUpdated.removeListener(onTabComplete);
+        void browser.tabs.discard(tabId).catch(() => {});
       }
-    }, 150);
-    setTimeout(async () => {
-      if (created.id) {
-        try {
-          await browser.tabs.discard(created.id);
-        } catch {}
-      }
-    }, 600);
+    };
+    browser.tabs.onUpdated.addListener(onTabComplete);
+    setTimeout(() => {
+      browser.tabs.onUpdated.removeListener(onTabComplete);
+    }, 10000);
   }
 }
 
