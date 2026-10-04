@@ -137,6 +137,17 @@ async function checkAndHealBlankTab(tabId: number, tab: { url?: string; windowId
   // 5. Silent Revert: reload original URL
   try {
     await browser.tabs.update(tabId, { url: originalUrl });
+
+    // If tab is in background, re-discard after URL commits to maintain memory saving
+    setTimeout(async () => {
+      try {
+        const cur = await browser.tabs.get(tabId);
+        if (cur && !cur.active && !cur.discarded && cur.url && cur.url !== 'about:blank') {
+          await browser.tabs.discard(tabId);
+        }
+      } catch {}
+    }, 800);
+
     return true;
   } catch {
     return false;
@@ -521,46 +532,57 @@ function setupWindowTabDiscarder(windowId: number, activeTabId?: number): void {
   if (!browser.tabs?.discard) return;
   const discardedTabIds = new Set<number>();
 
+  const isDiscardable = (t: { id?: number; active?: boolean; discarded?: boolean; url?: string }): boolean => {
+    return Boolean(
+      t.id &&
+      t.id !== activeTabId &&
+      !t.active &&
+      !t.discarded &&
+      !discardedTabIds.has(t.id) &&
+      extractWebUrl(t.url)
+    );
+  };
+
+  const discardTab = async (tabId: number): Promise<void> => {
+    if (discardedTabIds.has(tabId)) return;
+    discardedTabIds.add(tabId);
+    try {
+      await browser.tabs.discard(tabId);
+    } catch {}
+  };
+
   const discarder = (tabId: number, _changeInfo: any, tab: any) => {
-    if (tab.windowId === windowId && tabId !== activeTabId && !tab.active && !discardedTabIds.has(tabId)) {
-      // ONLY discard once the tab has completed its initial navigation
-      if (tab.url && tab.url !== 'about:blank' && tab.status === 'complete') {
-        discardedTabIds.add(tabId);
+    if (tab.windowId === windowId && isDiscardable(tab)) {
+      // Small debounce delay to ensure URL is safely committed in Chromium before discarding
+      setTimeout(async () => {
         try {
-          void browser.tabs.discard(tabId).catch(() => {});
+          const current = await browser.tabs.get(tabId);
+          if (isDiscardable(current)) {
+            await discardTab(tabId);
+          }
         } catch {}
-      }
+      }, 250);
     }
   };
 
   browser.tabs.onUpdated.addListener(discarder);
 
-  // Safe sweeps: only discard tabs that finished loading to avoid aborting navigation
-  const safeSweep = async () => {
+  // Progressive sweeps: discard background tabs as soon as their web URL is populated
+  const sweep = async () => {
     try {
       const currentTabs = await browser.tabs.query({ windowId });
       for (const t of currentTabs) {
-        if (
-          t.id &&
-          t.id !== activeTabId &&
-          !t.active &&
-          !discardedTabIds.has(t.id) &&
-          t.url &&
-          t.url !== 'about:blank' &&
-          t.status === 'complete'
-        ) {
-          discardedTabIds.add(t.id);
-          try {
-            await browser.tabs.discard(t.id);
-          } catch {}
+        if (isDiscardable(t)) {
+          await discardTab(t.id!);
         }
       }
     } catch {}
   };
 
-  setTimeout(safeSweep, 500);
-  setTimeout(safeSweep, 1500);
-  setTimeout(safeSweep, 3000);
+  setTimeout(sweep, 350);
+  setTimeout(sweep, 1000);
+  setTimeout(sweep, 2500);
+  setTimeout(sweep, 4500);
 
   // Remove listener after initial tab burst settles
   setTimeout(() => {
@@ -576,16 +598,22 @@ async function createDiscardedTab(windowId: number | undefined, url: string): Pr
   const created = await browser.tabs.create(createProps);
   if (created.id && browser.tabs.discard) {
     const tabId = created.id;
-    const onTabComplete = (id: number, changeInfo: any) => {
-      if (id === tabId && changeInfo.status === 'complete') {
-        browser.tabs.onUpdated.removeListener(onTabComplete);
-        void browser.tabs.discard(tabId).catch(() => {});
-      }
+    const tryDiscard = async () => {
+      try {
+        const t = await browser.tabs.get(tabId);
+        if (t && !t.active && !t.discarded && extractWebUrl(t.url)) {
+          await browser.tabs.discard(tabId);
+          return true;
+        }
+      } catch {}
+      return false;
     };
-    browser.tabs.onUpdated.addListener(onTabComplete);
-    setTimeout(() => {
-      browser.tabs.onUpdated.removeListener(onTabComplete);
-    }, 10000);
+    setTimeout(async () => {
+      const ok = await tryDiscard();
+      if (!ok) {
+        setTimeout(tryDiscard, 800);
+      }
+    }, 350);
   }
 }
 
