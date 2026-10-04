@@ -137,17 +137,6 @@ async function checkAndHealBlankTab(tabId: number, tab: { url?: string; windowId
   // 5. Silent Revert: reload original URL
   try {
     await browser.tabs.update(tabId, { url: originalUrl });
-
-    // If tab is in background, re-discard after URL commits to maintain memory saving
-    setTimeout(async () => {
-      try {
-        const cur = await browser.tabs.get(tabId);
-        if (cur && !cur.active && !cur.discarded && cur.url && cur.url !== 'about:blank') {
-          await browser.tabs.discard(tabId);
-        }
-      } catch {}
-    }, 800);
-
     return true;
   } catch {
     return false;
